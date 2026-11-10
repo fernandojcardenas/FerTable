@@ -1,0 +1,9 @@
+# Raw captures contain account data from the test Airtable account
+research/raw/
+node_modules/
+.next/
+.env
+.env.local
+.data/
+next-env.d.ts
+*.tsbuildinfo
