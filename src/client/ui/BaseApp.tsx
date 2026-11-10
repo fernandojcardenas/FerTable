@@ -100,6 +100,9 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   const [showDeveloper, setShowDeveloper] = useState(false);
   const [mode, setMode] = useState<"data" | "interfaces">("data");
   const [sidebar, setSidebar] = useState(true);
+  // On phones the sidebar slides over the page, so it starts closed and closes after a pick.
+  const narrow = () => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+  useEffect(() => { if (narrow()) setSidebar(false); }, []);
 
   // Fall back to the first table/view when the remembered one is gone.
   const tableId = sel.tableId && state.tables[sel.tableId] ? sel.tableId : state.tableOrder[0];
@@ -146,13 +149,13 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
       <div className="base-app">
         <Header me={me} mode={mode} setMode={setMode} onDeveloper={() => setShowDeveloper(true)} onAutomations={() => setShowAutomations(true)} onShare={() => setShowShare(true)} onToggleSidebar={() => setSidebar((s) => !s)} />
         {mode === "interfaces" ? (
-          <InterfacesView onOpenView={(vid) => { const v = state.views[vid]; if (v) { setSel({ tableId: v.tableId, viewId: vid }); setMode("data"); } }} />
+          <InterfacesView sidebar={sidebar} onPicked={() => narrow() && setSidebar(false)} onOpenView={(vid) => { const v = state.views[vid]; if (v) { setSel({ tableId: v.tableId, viewId: vid }); setMode("data"); } }} />
         ) : (
           <>
         <TableTabs activeId={table.id} onSelect={(id) => setSel({ tableId: id, viewId: state.tables[id]?.viewOrder[0] })} />
         <div className="workspace">
           <aside className={`sidebar ${sidebar ? "" : "collapsed"}`}>
-            <ViewList tableId={table.id} activeId={view.id} onSelect={(id) => setSel({ tableId: table.id, viewId: id })} />
+            <ViewList tableId={table.id} activeId={view.id} onSelect={(id) => { setSel({ tableId: table.id, viewId: id }); if (narrow()) setSidebar(false); }} />
           </aside>
           <section className="main">
             {table.sync && <SyncBanner table={table} />}
@@ -200,7 +203,7 @@ function Header({ me, mode, setMode, onDeveloper, onAutomations, onShare, onTogg
         onBlur={() => name.trim() && name !== snap.state.base.name && client.dispatch({ type: "base.rename", name })}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
       <span className="row small muted" title={`Transaction ${snap.state.base.txn}`}>
-        <span className={`status-dot ${snap.status}`} /> {statusText}
+        <span className={`status-dot ${snap.status}`} /> <span className="status-text">{statusText}</span>
       </span>
       <span className="mode-switch" role="tablist" aria-label="Section">
         <button role="tab" aria-selected={mode === "data"} className={mode === "data" ? "on" : ""} onClick={() => setMode("data")}>Data</button>
@@ -209,12 +212,12 @@ function Header({ me, mode, setMode, onDeveloper, onAutomations, onShare, onTogg
       {snap.role === "viewer" && <span className="role-badge" title="You can look but not change anything">View only</span>}
       {snap.role === "commenter" && <span className="role-badge" title="You can read and comment, but not change records">Can comment</span>}
       <span className="spacer" />
-      <button className="btn ghost" onClick={() => client.undo()} disabled={!snap.undoLabel} aria-label="Undo"
+      <button className="btn ghost hide-sm" onClick={() => client.undo()} disabled={!snap.undoLabel} aria-label="Undo"
         title={snap.undoLabel ? `Undo ${snap.undoLabel} (${MOD}Z)` : "Nothing to undo"}>↶</button>
-      <button className="btn ghost" onClick={() => client.redo()} disabled={!snap.redoLabel} aria-label="Redo"
+      <button className="btn ghost hide-sm" onClick={() => client.redo()} disabled={!snap.redoLabel} aria-label="Redo"
         title={snap.redoLabel ? `Redo ${snap.redoLabel} (${MOD}⇧Z)` : "Nothing to redo"}>↷</button>
-      <button className="btn ghost" onClick={onDeveloper} title="Developer API, access tokens and webhooks">{"</>"} API</button>
-      <button className="btn" onClick={onAutomations}>⚡ Automations</button>
+      <button className="btn ghost" onClick={onDeveloper} title="Developer API, access tokens and webhooks" aria-label="API and webhooks">{"</>"}<span className="hide-sm"> API</span></button>
+      <button className="btn" onClick={onAutomations} aria-label="Automations">⚡<span className="hide-sm"> Automations</span></button>
       <button className="btn primary" onClick={onShare}>Share</button>
       <AccountMenu me={me} />
     </header>

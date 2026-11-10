@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, Popover } from "./common";
 
 export type Me = { id: string; email: string; name: string; verified?: boolean };
@@ -14,6 +14,8 @@ export function initials(name: string): string {
 export function AccountMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false);
   const [changing, setChanging] = useState(false);
+  const install = useInstall();
+  const [iosHelp, setIosHelp] = useState(false);
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     location.href = "/login";
@@ -29,6 +31,7 @@ export function AccountMenu({ me }: { me: Me }) {
             <div className="muted small">{me.email}</div>
           </div>
           <div className="menu" style={{ padding: 0 }}>
+            {install.available && <button onClick={() => { setOpen(false); if (install.ios) setIosHelp(true); else void install.prompt(); }}>⤓ Install app</button>}
             <button onClick={() => { setOpen(false); setChanging(true); }}>🔑 Change password</button>
             <button onClick={signOut}>⎋ Sign out</button>
           </div>
@@ -36,6 +39,15 @@ export function AccountMenu({ me }: { me: Me }) {
       </Popover>
       {/* Outside the popover, which unmounts its content when it closes. */}
       {changing && <ChangePasswordDialog onClose={() => setChanging(false)} />}
+      {iosHelp && (
+        <Dialog title="Install gridbase" onClose={() => setIosHelp(false)} footer={<button className="btn primary" onClick={() => setIosHelp(false)}>Got it</button>}>
+          <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+            <li>Tap the <strong>Share</strong> button (the square with an arrow) in Safari.</li>
+            <li>Choose <strong>Add to Home Screen</strong>.</li>
+            <li>Tap <strong>Add</strong>. gridbase opens full screen from its icon.</li>
+          </ol>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -94,4 +106,25 @@ function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
       )}
     </Dialog>
   );
+}
+
+type InstallEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+
+/** Whether this browser can install the app now (Chrome/Edge/Android), or needs the iOS steps. */
+function useInstall() {
+  const [evt, setEvt] = useState<InstallEvent | null>(null);
+  const [ios, setIos] = useState(false);
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
+    if (standalone) return;
+    setIos(/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+    const on = (e: Event) => { e.preventDefault(); setEvt(e as InstallEvent); };
+    window.addEventListener("beforeinstallprompt", on);
+    return () => window.removeEventListener("beforeinstallprompt", on);
+  }, []);
+  return {
+    available: Boolean(evt) || ios,
+    ios: !evt && ios,
+    prompt: async () => { if (!evt) return; await evt.prompt(); await evt.userChoice.catch(() => null); setEvt(null); },
+  };
 }

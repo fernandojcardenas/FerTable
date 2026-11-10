@@ -19,7 +19,7 @@ const GAP = 12;
 const FN_LABEL: Record<Aggregate, string> = { count: "Count of records", sum: "Sum", avg: "Average", min: "Smallest", max: "Largest" };
 const KIND_LABEL: Record<PageElement["kind"], string> = { number: "Number", chart: "Chart", list: "Record list", map: "Map", text: "Text", button: "Button" };
 
-export function InterfacesView({ onOpenView }: { onOpenView: (viewId: string) => void }) {
+export function InterfacesView({ onOpenView, sidebar = true, onPicked }: { onOpenView: (viewId: string) => void; sidebar?: boolean; onPicked?: () => void }) {
   const { snap, client } = useBase();
   const state = snap.state;
   const pages = Object.values(state.pages ?? {}).sort((a, b) => a.name.localeCompare(b.name));
@@ -40,11 +40,11 @@ export function InterfacesView({ onOpenView }: { onOpenView: (viewId: string) =>
 
   return (
     <div className="workspace">
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebar ? "" : "collapsed"}`}>
         <div className="stack" style={{ gap: 2 }}>
           <span className="muted small" style={{ padding: "0 8px 4px" }}>Pages</span>
           {pages.map((p) => (
-            <button key={p.id} className={`view-item ${page?.id === p.id ? "active" : ""}`} onClick={() => setPageId(p.id)}>▦ {p.name}</button>
+            <button key={p.id} className={`view-item ${page?.id === p.id ? "active" : ""}`} onClick={() => { setPageId(p.id); onPicked?.(); }}>▦ {p.name}</button>
           ))}
           {pages.length === 0 && <span className="muted small" style={{ padding: "0 8px" }}>No pages yet.</span>}
           {canEdit && <button className="view-item" onClick={addPage}>＋ New page</button>}

@@ -266,6 +266,22 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     "40.7, -74.0", or separate latitude and longitude number fields.
   - On narrow screens, elements stack in one column.
 
+- **Installable app (PWA):** gridbase installs to a phone's home screen or a
+  computer's dock and opens full screen.
+  - Files: the manifest (`src/app/manifest.ts`), icons (`public/icons`, redrawn by
+    `node scripts/make-icons.mjs`), and a service worker (`public/sw.js`).
+  - Installing: Chrome, Edge and Android get **Install app** in the account menu.
+    On iPhone and iPad, that item shows the Share → **Add to Home Screen** steps.
+  - Offline: the service worker caches only built files and icons. Pages and data
+    always come from the server, so nothing private is stored on the device.
+    Without a connection you see `/offline.html`, which reloads once you're back
+    online.
+  - Phone layout: the header wraps onto two rows, and the views and pages sidebar
+    slides over the content and closes after a pick. Toolbars scroll sideways,
+    dialogs fill the screen, interface pages stack, and the notch area is respected.
+  - The service worker registers only in production builds (`npm start`), so
+    `npm run dev` isn't cached. Phones need HTTPS to install (localhost is exempt).
+
 ## Not built yet
 
-Ideas for later: timeline, list and Gantt views; native iOS app.
+Ideas for later: timeline, list and Gantt views; a native iOS app (the plan once the web app is settled).

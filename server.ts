@@ -446,7 +446,8 @@ function handleSocket(ws: WebSocket, url: URL, user: User) {
 
 /** Pages anyone may load without signing in. */
 function isPublicPath(path: string): boolean {
-  return path === "/login" || path === "/reset" || path === "/verify" || path.startsWith("/f/") || path.startsWith("/_next/") || path.startsWith("/__nextjs") || path === "/favicon.ico";
+  return path === "/login" || path === "/reset" || path === "/verify" || path.startsWith("/f/") || path.startsWith("/_next/") || path.startsWith("/__nextjs") || path === "/favicon.ico"
+    || path === "/manifest.webmanifest" || path === "/sw.js" || path === "/offline.html" || path.startsWith("/icons/");
 }
 
 await app.prepare();
