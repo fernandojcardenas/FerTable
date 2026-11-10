@@ -188,12 +188,32 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
   a record back with its id, created time, number, values, files and links (on both
   sides). Files of recently deleted records aren't cleaned up while they can still be
   restored. Records from a deleted table aren't listed.
-- **Automations:** when a record is created, updated or starts matching conditions,
-  update it, create records in any table, or send an email, with `{Field name}`
-  placeholders. The editor's **Test** panel shows what each step would do for a record
-  you pick, and **Run now** runs it once for real. Email steps go to at most 10
-  addresses, and each base sends at most 100 automation emails an hour
-  (`GRIDBASE_AUTOMATION_EMAILS_PER_HOUR`).
+- **Automations:** start when a record is created, updated, starts matching
+  conditions, enters a view, or comes in through a form (including public links), or
+  on a schedule (every hour, day or week; once, or for each record in a view, up to
+  100). Steps: update the record, create records, send an email (use Gmail by pointing
+  `SMTP_URL` at Gmail's SMTP with an app password), **If / otherwise** branches,
+  **Repeat** for each linked record (up to 100), **Run a script**, **Post to Slack**,
+  **Add a row to Google Sheets**, and **Call a webhook**. Values use `{Field name}`
+  placeholders. Branches and loops nest up to 3 deep, with 50 steps per automation
+  and 200 steps per run.
+  - Scripts are JavaScript running in QuickJS (WebAssembly), with no files, network
+    or Node APIs, a 1-second limit and 16 MB of memory. They see `record` and
+    `trigger` (field name → value), `console.log` goes to the run log, and returning
+    `{ "Field": value }` updates the record.
+  - Slack, Sheets and webhook addresses are saved as **Connections**
+    (`automation_connections`). They stay on the server; steps refer to them by id.
+    Posts only go to public https addresses: private and loopback IPs are refused
+    when you save and when the connection is made (so a DNS change can't point
+    inside the network). Redirects aren't followed, and posts time out after
+    10 seconds. For Sheets, deploy an Apps Script web app whose `doPost(e)` appends
+    `JSON.parse(e.postData.contents).values` as a row.
+  - The **Test** panel shows what each step would do for a record you pick.
+    **Run now** runs it once for real.
+  - Limits per base per hour: 100 emails (`GRIDBASE_AUTOMATION_EMAILS_PER_HOUR`) and
+    300 posts (`GRIDBASE_AUTOMATION_POSTS_PER_HOUR`). Each email goes to at most 10
+    addresses. The server checks schedules every minute (`automation_schedule`
+    keeps the last run). A new schedule waits for its first due time.
 
 ## Not built yet
 

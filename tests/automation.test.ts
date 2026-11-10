@@ -34,7 +34,7 @@ test("record steps preview in plain words, including new select options", () => 
   ], ids.t);
   const plan = planSteps(s, a, s.rows[ids.r]);
   assert.deepEqual(plan.preview, [
-    { kind: "update", tableName: "Requests", cells: [{ field: "Status", value: "Done" }] },
+    { kind: "update", tableName: "Requests", cells: [{ field: "Status", value: "Done" }], recordName: "Ana" },
     { kind: "create", tableName: "Log", cells: [{ field: "Name", value: "Request from Ana" }] },
   ]);
   assert.equal(plan.actions.length, 2);

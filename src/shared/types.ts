@@ -147,15 +147,40 @@ export type View = {
 export type AutomationTrigger =
   | { type: "recordCreated"; tableId: string }
   | { type: "recordUpdated"; tableId: string; watchFieldIds: string[] }
-  | { type: "recordMatches"; tableId: string; filters: Filters };
+  | { type: "recordMatches"; tableId: string; filters: Filters }
+  /** A record was created through a form (a member's form view or a public link); null = any form. */
+  | { type: "formSubmitted"; tableId: string; viewId: string | null }
+  /** A record starts showing in a view (it now matches the view's filters). */
+  | { type: "enteredView"; tableId: string; viewId: string }
+  /**
+   * On a schedule, in UTC. With a view, the steps run once for each record in it (up to 100);
+   * without one they run once with no record.
+   */
+  | { type: "schedule"; tableId: string; every: "hour" | "day" | "week"; minute: number; hourUtc: number; weekdayUtc: number; viewId: string | null };
 
 // Step values are templates: literal text, with {fieldId} replaced by the
-// trigger record's value for that field.
+// current record's value for that field (or the trigger record's, for its fields).
 export type AutomationStep =
   | { type: "updateRecord"; values: Record<string, string> }
   | { type: "createRecord"; tableId: string; values: Record<string, string> }
-  /** to/subject/body are templates too; `to` is a comma-separated list of addresses. */
-  | { type: "sendEmail"; to: string; subject: string; body: string };
+  /** to/subject/body are templates too; `to` is a comma-separated list of addresses. Works with Gmail through SMTP_URL. */
+  | { type: "sendEmail"; to: string; subject: string; body: string }
+  /** Run `then` when the current record matches the conditions, otherwise `otherwise`. */
+  | { type: "condition"; filters: Filters; then: AutomationStep[]; otherwise: AutomationStep[] }
+  /** Run the steps once for each record linked in this field (the linked record becomes the current record). */
+  | { type: "forEach"; linkFieldId: string; steps: AutomationStep[] }
+  /** JavaScript run in a sandbox: sees `record`, may return { "Field name": value } to update it. */
+  | { type: "script"; code: string }
+  /** Post a message to Slack through a saved incoming-webhook connection. */
+  | { type: "slack"; connectionId: string; text: string }
+  /** Add a row to a Google Sheet through a saved Apps Script web app connection. */
+  | { type: "sheets"; connectionId: string; columns: string[] }
+  /** POST JSON to a saved webhook connection; `body` is a template. */
+  | { type: "webhook"; connectionId: string; body: string };
+
+/** Where a connection posts. The URL itself stays on the server. */
+export type ConnectionKind = "slack" | "sheets" | "webhook";
+export type ConnectionInfo = { id: string; kind: ConnectionKind; name: string; host: string };
 
 export type Automation = {
   id: string;
@@ -189,7 +214,7 @@ export type Action =
   | { type: "field.update"; fieldId: string; name?: string; fieldType?: FieldType; options?: FieldOptions; description?: string; inverseFieldId?: string }
   | { type: "field.delete"; fieldId: string }
   | { type: "field.move"; fieldId: string; toIndex: number }
-  | { type: "row.create"; rowId: string; tableId: string; cells?: Record<string, CellValue>; createdAt?: string; afterRowId?: string | null }
+  | { type: "row.create"; rowId: string; tableId: string; cells?: Record<string, CellValue>; createdAt?: string; afterRowId?: string | null; formViewId?: string }
   | { type: "row.update"; rowId: string; cells: Record<string, CellValue> }
   | { type: "row.delete"; rowIds: string[] }
   /** The server writes an AI field's result (clients can't send this). */

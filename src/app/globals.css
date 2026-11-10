@@ -331,3 +331,6 @@ textarea.cell-editor { height: 140px; bottom: auto; padding: 6px; resize: none; 
 .rating .star.on { color: #f5b301; }
 .chip.user { background: var(--hover, rgba(127,127,127,.12)); }
 .cell-button { padding: 1px 8px; }
+.branch { border-left: 3px solid var(--line); padding-left: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+.textarea.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.connections summary { cursor: pointer; }

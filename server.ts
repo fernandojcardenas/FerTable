@@ -12,6 +12,7 @@ import {
 } from "./src/server/auth";
 import { getDb } from "./src/server/db";
 import { publicFormDefinition } from "./src/shared/publicForm";
+import { addConnection, listConnections, removeConnection } from "./src/server/connections";
 import { appUrl, inviteEmail, mailMode, sendMailInBackground, sharedEmail } from "./src/server/mail";
 import { addComment, commentCounts, deleteComment, editComment, getComment, listComments, notifyMentions } from "./src/server/comments";
 import { Computer } from "./src/shared/compute";
@@ -285,8 +286,20 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (sub === "automations" && item && parts[5] === "run" && method === "POST") {
       await requireRole(user, baseId, "editor");
       const body = await readJson(req);
-      if (typeof body.rowId !== "string") throw new ValidationError("Pick a record");
-      return send(res, 200, await engine.runNow(baseId, item, body.rowId));
+      return send(res, 200, await engine.runNow(baseId, item, typeof body.rowId === "string" ? body.rowId : null));
+    }
+    // Saved connections for Slack, Google Sheets and webhook steps (URLs never leave the server).
+    if (sub === "connections") {
+      await requireRole(user, baseId, "editor");
+      if (method === "GET" && !item) return send(res, 200, { connections: await listConnections(baseId) });
+      if (method === "POST" && !item) {
+        const body = await readJson(req);
+        return send(res, 201, await addConnection(baseId, body.kind, body.name, body.url));
+      }
+      if (method === "DELETE" && item) {
+        await removeConnection(baseId, item);
+        return send(res, 200, { ok: true });
+      }
     }
     if (sub === "members") {
       if (method === "GET") {
@@ -402,6 +415,7 @@ function isPublicPath(path: string): boolean {
 await app.prepare();
 await getDb(); // run migrations before taking traffic
 ensureAdminToken();
+engine.startScheduler();
 
 // Remove uploaded files nothing uses anymore: shortly after start, then every 6 hours.
 const cleanup = () => engine.cleanupFiles().then((n) => n && console.log(`Removed ${n} unused file(s)`)).catch((e) => console.error("file cleanup failed", e));

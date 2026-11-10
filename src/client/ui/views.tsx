@@ -273,7 +273,7 @@ export function FormView({ view }: { view: View }) {
     const pre = Object.entries(extraChoices).map(([fieldId, chs]) => ({
       type: "field.update" as const, fieldId, options: { choices: [...(snap.state.fields[fieldId].options.choices ?? []), ...chs] },
     }));
-    if (client.dispatch(...pre, { type: "row.create", rowId: newId("rec"), tableId: table.id, cells: values })) {
+    if (client.dispatch(...pre, { type: "row.create", rowId: newId("rec"), tableId: table.id, cells: values, formViewId: view.id })) {
       setDone(true);
       setValues({});
       setExtraChoices({});

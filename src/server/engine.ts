@@ -2,11 +2,14 @@
 // per-base lock, saves what changed to Postgres, logs the transaction and
 // broadcasts it to every connected client. Then it runs automations.
 
-import type { Action, ActionBatch, Attachment, Automation, BaseState, CellValue, Field, People, Role, Row, ServerMessage, View } from "../shared/types";
+import type { Action, ActionBatch, Attachment, Automation, AutomationStep, BaseState, CellValue, Field, People, Role, Row, ServerMessage, View } from "../shared/types";
 import { applyActions, emptyBase, ValidationError } from "../shared/reducer";
 import { Computer, CellError } from "../shared/compute";
-import { matchesFilters } from "../shared/query";
-import { fillTemplate, planSteps, templateRefs } from "../shared/automation";
+import { matchesFilters, viewRows } from "../shared/query";
+import { emailStep, fillTemplate, lastScheduledTime, linkedRecords, MAX_LOOP_ITEMS, postPayload, recordStepActions, templateRefs, type RunContext } from "../shared/automation";
+import { connectionUrl, safePost } from "./connections";
+import { runScript } from "./script";
+import { isComputed } from "../shared/fieldTypes";
 import { generateCell, type AiResult } from "./ai";
 import { checkSubmission, PUBLIC_TOKEN_RE } from "../shared/publicForm";
 import { oneLine, sendMail } from "./mail";
@@ -412,7 +415,7 @@ export class Engine {
     const form = found.view.config.form!;
     await this.apply(found.baseId, {
       clientId: null, requestId: null, userId: null, actor: `Form “${(form.title || found.view.name).slice(0, 80)}”`,
-      actions: [{ type: "row.create", rowId: newId("rec"), tableId: found.view.tableId, cells }],
+      actions: [{ type: "row.create", rowId: newId("rec"), tableId: found.view.tableId, cells, formViewId: found.view.id }],
     });
   }
 
@@ -465,12 +468,16 @@ export class Engine {
   // ---- automations ----
 
   private async runAutomations(baseId: string, before: BaseState, after: BaseState, batch: ActionBatch) {
-    const autos = Object.values(after.automations).filter((a) => a.enabled);
+    const autos = Object.values(after.automations).filter((a) => a.enabled && a.trigger.type !== "schedule");
     if (autos.length === 0) return;
     const created = new Set<string>();
+    const viaForm = new Map<string, string>();
     const updated = new Map<string, Set<string>>();
     for (const a of batch.actions) {
-      if (a.type === "row.create") created.add(a.rowId);
+      if (a.type === "row.create") {
+        created.add(a.rowId);
+        if (a.formViewId) viaForm.set(a.rowId, a.formViewId);
+      }
       if (a.type === "row.update" || a.type === "link.add" || a.type === "link.remove") {
         const s = updated.get(a.rowId) ?? new Set();
         if (a.type === "row.update") Object.keys(a.cells).forEach((k) => s.add(k));
@@ -482,82 +489,212 @@ export class Engine {
     const now = new Date(batch.at);
     const cBefore = new Computer(before, now);
     const cAfter = new Computer(after, now);
+    /** Started matching these filters with this change (new records count as not matching before). */
+    const entered = (rowId: string, filters: Parameters<typeof matchesFilters>[2]) => {
+      const row = after.rows[rowId];
+      const prev = before.rows[rowId];
+      return matchesFilters(cAfter, row, filters) && !(prev && matchesFilters(cBefore, prev, filters));
+    };
 
     for (const auto of autos) {
-      const tableId = auto.trigger.tableId;
+      const t = auto.trigger;
       const hits: string[] = [];
-      const touched = [...created, ...updated.keys()];
-      for (const rowId of new Set(touched)) {
+      for (const rowId of new Set([...created, ...updated.keys()])) {
         const row = after.rows[rowId];
-        if (!row || row.tableId !== tableId) continue;
-        const t = auto.trigger;
+        if (!row || row.tableId !== t.tableId) continue;
         if (t.type === "recordCreated" && created.has(rowId)) hits.push(rowId);
         if (t.type === "recordUpdated" && updated.has(rowId) && !created.has(rowId)) {
           const changed = updated.get(rowId)!;
           if (t.watchFieldIds.length === 0 || t.watchFieldIds.some((f) => changed.has(f))) hits.push(rowId);
         }
-        if (t.type === "recordMatches") {
-          const now = matchesFilters(cAfter, row, t.filters);
-          const prevRow = before.rows[rowId];
-          const was = prevRow ? matchesFilters(cBefore, prevRow, t.filters) : false;
-          if (now && !was) hits.push(rowId);
-        }
+        if (t.type === "recordMatches" && entered(rowId, t.filters)) hits.push(rowId);
+        if (t.type === "formSubmitted" && viaForm.has(rowId) && (t.viewId === null || viaForm.get(rowId) === t.viewId)) hits.push(rowId);
+        if (t.type === "enteredView" && after.views[t.viewId] && entered(rowId, after.views[t.viewId].config.filters)) hits.push(rowId);
       }
       for (const rowId of hits) await this.runOne(baseId, auto, rowId, batch.txn);
     }
   }
 
-  private async runOne(baseId: string, auto: Automation, rowId: string, txn: number): Promise<RunResult> {
+  /** Run an automation's steps for one record (or none, for a schedule without a view) and log the run. */
+  private async runOne(baseId: string, auto: Automation, rowId: string | null, txn: number): Promise<RunResult> {
     const db = await getDb();
+    const run: RunState = { steps: 0, records: 0, emailed: 0, posts: 0, scripts: 0, logs: [], txn };
     let status: RunResult["status"] = "success";
-    let message: string;
-    let runTxn: number | null = txn;
+    let error = "";
     try {
       const state = await this.getState(baseId);
-      if (!state?.rows[rowId]) throw new Error("The trigger record no longer exists");
-      const plan = planSteps(state, auto, state.rows[rowId]);
-      if (plan.problems.length) throw new Error(plan.problems.join("; "));
-      if (plan.actions.length === 0 && plan.emails.length === 0) throw new Error("Nothing to do");
-      if (plan.actions.length) {
-        // Create any select options the steps need first.
-        const batch = await this.apply(baseId, { clientId: null, requestId: null, actions: [...plan.fieldUpdates, ...plan.actions], actor: `Automation “${auto.name}”` }, "automation");
-        runTxn = batch.txn;
-      }
-      const parts = [];
-      if (plan.actions.length) parts.push(`${plan.actions.length} record change${plan.actions.length === 1 ? "" : "s"}`);
-      let sent = 0;
-      for (const mail of plan.emails) {
-        if (!takeEmailBudget(baseId, mail.to.length)) {
-          status = "failed";
-          parts.push(`stopped: more than ${EMAILS_PER_HOUR} automation emails this hour`);
-          break;
-        }
-        await sendMail({ to: mail.to.join(", "), subject: mail.subject, text: mail.text + automationFooter(auto.name) });
-        sent += mail.to.length;
-      }
-      if (plan.emails.length) parts.push(`emailed ${sent} ${sent === 1 ? "person" : "people"}`);
-      message = `${parts.join(", ")} for record ${rowId}`;
+      if (rowId && !state?.rows[rowId]) throw new Error("The trigger record no longer exists");
+      await this.execSteps(baseId, auto, auto.steps, { triggerId: rowId, currentId: rowId }, run, "");
     } catch (e) {
       status = "failed";
-      message = e instanceof Error ? e.message : String(e);
+      error = e instanceof Error ? e.message : String(e);
     }
+    const done = [
+      run.records && `${run.records} record change${run.records === 1 ? "" : "s"}`,
+      run.emailed && `emailed ${run.emailed} ${run.emailed === 1 ? "person" : "people"}`,
+      run.posts && `${run.posts} message${run.posts === 1 ? "" : "s"} sent`,
+      run.scripts && `${run.scripts} script${run.scripts === 1 ? "" : "s"} run`,
+    ].filter(Boolean).join(", ");
+    const where = rowId ? ` for record ${rowId}` : "";
+    const message = (status === "failed" ? `${error}${done ? ` (after ${done})` : ""}` : `${done || "Nothing to do"}${where}`)
+      + (run.logs.length ? `\n${run.logs.join("\n")}`.slice(0, 2000) : "");
     await db.query(
       "insert into automation_runs (base_id, automation_id, txn, status, message) values ($1, $2, $3, $4, $5)",
-      [baseId, auto.id, runTxn, status, message],
+      [baseId, auto.id, run.txn, status, message],
     );
     return { status, message };
   }
 
-  /** Run a saved automation once on one record, whatever its trigger says ("Run now" in the editor). */
-  async runNow(baseId: string, automationId: string, rowId: string): Promise<RunResult> {
+  /** Run steps in order. Each step sees the base as the steps before it left it. */
+  private async execSteps(baseId: string, auto: Automation, steps: AutomationStep[], ids: { triggerId: string | null; currentId: string | null }, run: RunState, label: string): Promise<void> {
+    for (const [i, step] of steps.entries()) {
+      const where = `Step ${label}${i + 1}`;
+      if (++run.steps > MAX_RUN_STEPS) throw new Error(`Stopped after ${MAX_RUN_STEPS} steps in one run`);
+      const state = await this.getState(baseId);
+      if (!state) throw new Error("The base is gone");
+      const ctx: RunContext = { trigger: ids.triggerId ? state.rows[ids.triggerId] ?? null : null, current: ids.currentId ? state.rows[ids.currentId] ?? null : null };
+      const actor = `Automation “${auto.name}”`;
+      const applyRecordStep = async (s: Extract<AutomationStep, { type: "updateRecord" | "createRecord" }>) => {
+        const r = recordStepActions(state, s, ctx);
+        if (!r.action) throw new Error(`${where}: there's no record to update`);
+        const batch = await this.apply(baseId, { clientId: null, requestId: null, actions: [...r.fieldUpdates, r.action], actor }, "automation");
+        run.txn = batch.txn;
+        run.records++;
+      };
+      switch (step.type) {
+        case "updateRecord":
+        case "createRecord":
+          await applyRecordStep(step);
+          break;
+        case "sendEmail": {
+          const r = emailStep(state, auto.name, step, ctx);
+          if (!r.email) throw new Error(`${where}: ${r.problem}`);
+          if (!takeBudget(emailBudget, baseId, r.email.to.length, EMAILS_PER_HOUR)) throw new Error(`${where}: more than ${EMAILS_PER_HOUR} automation emails this hour`);
+          await sendMail({ to: r.email.to.join(", "), subject: r.email.subject, text: r.email.text + automationFooter(auto.name) });
+          run.emailed += r.email.to.length;
+          break;
+        }
+        case "condition": {
+          if (!ctx.current) throw new Error(`${where}: there's no record to check`);
+          const yes = matchesFilters(new Computer(state), ctx.current, step.filters);
+          await this.execSteps(baseId, auto, yes ? step.then : step.otherwise, ids, run, `${label}${i + 1}.`);
+          break;
+        }
+        case "forEach": {
+          const list = linkedRecords(state, ctx.current, step.linkFieldId).slice(0, MAX_LOOP_ITEMS);
+          for (const r of list) await this.execSteps(baseId, auto, step.steps, { triggerId: ids.triggerId, currentId: r.id }, run, `${label}${i + 1}.`);
+          break;
+        }
+        case "script": {
+          const asObject = (row: Row | null) => {
+            if (!row) return null;
+            const c = new Computer(state);
+            const out: Record<string, unknown> = { id: row.id };
+            for (const fid of state.tables[row.tableId]?.fieldOrder ?? []) {
+              const f = state.fields[fid];
+              if (!f) continue;
+              const v = c.value(row, f);
+              out[f.name] = v instanceof CellError ? null : v;
+            }
+            return out;
+          };
+          const result = await runScript(step.code, asObject(ctx.current), asObject(ctx.trigger));
+          run.scripts++;
+          if (result.log) run.logs.push(`${where} log: ${result.log}`);
+          if (!result.ok) throw new Error(`${where}: ${result.error}`);
+          if (result.updates && Object.keys(result.updates).length) {
+            if (!ctx.current) throw new Error(`${where}: the script returned changes but there's no record to update`);
+            const fields = (state.tables[ctx.current.tableId]?.fieldOrder ?? []).map((id) => state.fields[id]).filter(Boolean);
+            const values: Record<string, string> = {};
+            for (const [name, v] of Object.entries(result.updates)) {
+              const f = fields.find((x) => x.name === name) ?? fields.find((x) => x.name.toLowerCase() === name.toLowerCase());
+              if (!f) throw new Error(`${where}: the script set "${name}", but there's no such field`);
+              if (isComputed(f.type)) throw new Error(`${where}: "${f.name}" is computed and can't be set`);
+              values[f.id] = v === null || v === undefined ? "" : Array.isArray(v) ? v.join(", ") : String(v);
+            }
+            await applyRecordStep({ type: "updateRecord", values });
+          }
+          break;
+        }
+        case "slack":
+        case "sheets":
+        case "webhook": {
+          const conn = await connectionUrl(baseId, step.connectionId);
+          if (!conn) throw new Error(`${where}: its connection was deleted`);
+          if (step.type !== "webhook" && conn.kind !== step.type) throw new Error(`${where}: that connection isn't a ${step.type === "slack" ? "Slack" : "Google Sheets"} connection`);
+          if (!takeBudget(postBudget, baseId, 1, POSTS_PER_HOUR)) throw new Error(`${where}: more than ${POSTS_PER_HOUR} automation messages this hour`);
+          let status = 0;
+          try {
+            status = (await safePost(conn.url, postPayload(state, step, ctx))).status;
+          } catch (e) {
+            throw new Error(`${where}: couldn't reach ${new URL(conn.url).hostname} (${e instanceof Error ? e.message : String(e)})`);
+          }
+          // Apps Script web apps answer a POST with a redirect to the result.
+          if (status >= 400 || (status >= 300 && conn.kind !== "sheets")) throw new Error(`${where}: ${new URL(conn.url).hostname} answered ${status}`);
+          run.posts++;
+          break;
+        }
+      }
+    }
+  }
+
+  /** Run a saved automation once now ("Run now" in the editor, or a button). Schedules without a view take no record. */
+  async runNow(baseId: string, automationId: string, rowId: string | null): Promise<RunResult> {
     const state = await this.getState(baseId);
     const auto = state?.automations[automationId];
     if (!auto) throw new ValidationError("Save the automation first");
-    const row = state!.rows[rowId];
+    const noRecord = auto.trigger.type === "schedule" && !auto.trigger.viewId;
+    if (noRecord) return this.runOne(baseId, auto, null, state!.base.txn);
+    const row = rowId ? state!.rows[rowId] : undefined;
     if (!row || row.tableId !== auto.trigger.tableId) throw new ValidationError("Pick a record from the trigger's table");
     return this.runOne(baseId, auto, rowId, state!.base.txn);
   }
+
+  // ---- scheduled automations ----
+
+  private scheduler: ReturnType<typeof setInterval> | null = null;
+
+  /** Check scheduled automations every minute. */
+  startScheduler() {
+    if (this.scheduler) return;
+    this.scheduler = setInterval(() => void this.runSchedules().catch((e) => console.error("schedule error", e)), 60_000);
+    setTimeout(() => void this.runSchedules().catch((e) => console.error("schedule error", e)), 5_000);
+  }
+
+  /** Run schedules that came due since their last run. A new schedule waits for its first due time. */
+  async runSchedules(now = new Date()): Promise<number> {
+    const db = await getDb();
+    const { rows } = await db.query<{ base_id: string; data: Automation }>(
+      "select base_id, data from automations where data->'trigger'->>'type' = 'schedule' and (data->>'enabled')::boolean",
+    );
+    let ran = 0;
+    for (const { base_id: baseId, data: auto } of rows) {
+      if (auto.trigger.type !== "schedule") continue;
+      const due = lastScheduledTime(auto.trigger, now);
+      const { rows: seen } = await db.query<{ last_run: string }>("select last_run from automation_schedule where automation_id = $1", [auto.id]);
+      if (!seen[0]) {
+        await db.query("insert into automation_schedule (automation_id, base_id, last_run) values ($1, $2, $3) on conflict do nothing", [auto.id, baseId, now.toISOString()]);
+        continue;
+      }
+      if (new Date(seen[0].last_run) >= due) continue;
+      await db.query("update automation_schedule set last_run = $2 where automation_id = $1", [auto.id, now.toISOString()]);
+      const state = await this.getState(baseId);
+      const live = state?.automations[auto.id];
+      if (!state || !live?.enabled || live.trigger.type !== "schedule") continue;
+      ran++;
+      if (live.trigger.viewId && state.views[live.trigger.viewId]) {
+        const list = viewRows(new Computer(state, now), state, state.views[live.trigger.viewId]).slice(0, MAX_LOOP_ITEMS);
+        for (const r of list) await this.runOne(baseId, live, r.id, state.base.txn);
+      } else if (!live.trigger.viewId) {
+        await this.runOne(baseId, live, null, state.base.txn);
+      }
+    }
+    return ran;
+  }
 }
+
+type RunState = { steps: number; records: number; emailed: number; posts: number; scripts: number; logs: string[]; txn: number };
+const MAX_RUN_STEPS = 200;
 
 export type RunResult = { status: "success" | "failed"; message: string };
 
@@ -574,12 +711,16 @@ const isAttachmentList = (v: unknown): v is Attachment[] =>
 
 /** Automation emails per base per hour, so a busy or careless automation can't flood inboxes. */
 export const EMAILS_PER_HOUR = Number(process.env.GRIDBASE_AUTOMATION_EMAILS_PER_HOUR ?? 100);
-const emailBudget = new Map<string, { windowStart: number; used: number }>();
-function takeEmailBudget(baseId: string, count: number): boolean {
+/** Slack, Sheets and webhook messages per base per hour. */
+export const POSTS_PER_HOUR = Number(process.env.GRIDBASE_AUTOMATION_POSTS_PER_HOUR ?? 300);
+type Budget = Map<string, { windowStart: number; used: number }>;
+const emailBudget: Budget = new Map();
+const postBudget: Budget = new Map();
+function takeBudget(budget: Budget, baseId: string, count: number, perHour: number): boolean {
   const now = Date.now();
-  let b = emailBudget.get(baseId);
-  if (!b || now - b.windowStart > 3600_000) emailBudget.set(baseId, (b = { windowStart: now, used: 0 }));
-  if (b.used + count > EMAILS_PER_HOUR) return false;
+  let b = budget.get(baseId);
+  if (!b || now - b.windowStart > 3600_000) budget.set(baseId, (b = { windowStart: now, used: 0 }));
+  if (b.used + count > perHour) return false;
   b.used += count;
   return true;
 }

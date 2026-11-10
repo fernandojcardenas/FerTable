@@ -3,14 +3,14 @@
 // It must be deterministic: anything time-based comes from the action itself.
 
 import type {
-  Action, Automation, BaseState, CellValue, Field, FieldOptions, FieldType, RestorePatch, Row, Table, View, ViewConfig, ViewType,
+  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, RestorePatch, Row, Table, View, ViewConfig, ViewType,
 } from "./types";
 import { applyOrderPatch } from "./history";
 import { choicesFromText, coerceValue, defaultOptions, isComputed } from "./fieldTypes";
 import { CellError, Computer } from "./compute";
 import { FormulaError, parseFormula, referencedIds, toText } from "./formula";
 import { isId } from "./ids";
-import { EMAIL_LIMITS } from "./automation";
+import { countSteps, EMAIL_LIMITS, MAX_DEPTH, MAX_SCRIPT_LENGTH, MAX_STEPS } from "./automation";
 import { PUBLIC_TOKEN_RE } from "./publicForm";
 
 export class ValidationError extends Error {}
@@ -203,6 +203,92 @@ function validateOptions(d: Draft, tableId: string, fieldId: string, type: Field
     }
     default:
       return {};
+  }
+}
+
+function checkTrigger(d: Draft, au: Automation) {
+  const t = au.trigger;
+  const viewIn = (viewId: string | null, type?: string) => {
+    if (viewId === null) return;
+    const v = d.views[viewId];
+    if (!v || v.tableId !== t.tableId || (type && v.type !== type)) fail("The trigger's view isn't in that table");
+  };
+  switch (t.type) {
+    case "recordCreated": case "recordUpdated": case "recordMatches": return;
+    case "formSubmitted": return viewIn(t.viewId, "form");
+    case "enteredView": if (!t.viewId) fail("Pick a view"); return viewIn(t.viewId);
+    case "schedule":
+      if (!["hour", "day", "week"].includes(t.every)) fail("Pick how often the schedule runs");
+      for (const [k, max] of [["minute", 59], ["hourUtc", 23], ["weekdayUtc", 6]] as const) {
+        if (!Number.isInteger(t[k]) || t[k] < 0 || t[k] > max) fail("The schedule's time isn't valid");
+      }
+      return viewIn(t.viewId);
+    default:
+      fail("Unknown trigger");
+  }
+}
+
+/** Check steps (and the steps inside branches and loops). `tableId` is the current record's table, or null when there's none. */
+function checkSteps(d: Draft, steps: AutomationStep[], tableId: string | null, depth: number) {
+  if (depth > MAX_DEPTH) fail(`Branches and loops can be nested ${MAX_DEPTH} deep at most`);
+  const fieldsIn = (values: Record<string, string>, table: string) => {
+    if (!values || typeof values !== "object") fail("A step's values must be a map");
+    for (const [fid, v] of Object.entries(values)) {
+      const f = d.fields[fid];
+      if (!f || f.tableId !== table || isComputed(f.type)) fail("A step sets a field that can't be set");
+      if (typeof v !== "string" || v.length > 10_000) fail("A step's value is too long");
+    }
+  };
+  const text = (v: unknown, max: number, what: string) => { if (typeof v !== "string" || v.length > max) fail(`The ${what} is missing or too long`); };
+  for (const s of steps) {
+    switch (s.type) {
+      case "sendEmail":
+        for (const k of ["to", "subject", "body"] as const) {
+          if (typeof s[k] !== "string") fail("An email step needs a recipient, subject and message");
+          if (s[k].length > EMAIL_LIMITS[k]) fail(`The email ${k === "to" ? "recipient list" : k} is too long`);
+        }
+        if (!s.to.trim()) fail("An email step needs someone to send to");
+        break;
+      case "updateRecord":
+        if (!tableId) fail("There's no record to update here (a schedule needs a view for that)");
+        fieldsIn(s.values, tableId!);
+        break;
+      case "createRecord":
+        if (!d.tables[s.tableId]) fail("A step points to a missing table");
+        fieldsIn(s.values, s.tableId);
+        break;
+      case "condition":
+        if (!tableId) fail("Conditions need a record to check (a schedule needs a view for that)");
+        if (!s.filters || !Array.isArray(s.filters.conditions)) fail("A condition needs its rules");
+        for (const c of s.filters.conditions) if (d.fields[c.fieldId]?.tableId !== tableId) fail("A condition checks a field that isn't on the record");
+        if (!Array.isArray(s.then) || !Array.isArray(s.otherwise)) fail("A condition needs its two branches");
+        checkSteps(d, s.then, tableId, depth + 1);
+        checkSteps(d, s.otherwise, tableId, depth + 1);
+        break;
+      case "forEach": {
+        const lf = d.fields[s.linkFieldId];
+        if (!tableId || !lf || lf.type !== "link" || lf.tableId !== tableId) fail("Repeat needs a link field on the record");
+        if (!Array.isArray(s.steps)) fail("Repeat needs its steps");
+        checkSteps(d, s.steps, lf!.options.linkedTableId ?? null, depth + 1);
+        break;
+      }
+      case "script":
+        text(s.code, MAX_SCRIPT_LENGTH, "script");
+        break;
+      case "slack":
+        text(s.connectionId, 40, "Slack connection"); text(s.text, 3000, "Slack message");
+        break;
+      case "sheets":
+        text(s.connectionId, 40, "Google Sheets connection");
+        if (!Array.isArray(s.columns) || s.columns.length > 50) fail("A sheet row can have up to 50 columns");
+        s.columns.forEach((c) => text(c, 5000, "column value"));
+        break;
+      case "webhook":
+        text(s.connectionId, 40, "webhook connection"); text(s.body, 20_000, "webhook body");
+        break;
+      default:
+        fail("Unknown automation step");
+    }
   }
 }
 
@@ -683,24 +769,12 @@ function apply(d: Draft, a: Action, at: string): void {
       if (!isId(au.id, "aut")) fail("Invalid automation id");
       cleanName(au.name, "Automation");
       if (!d.tables[au.trigger.tableId]) fail("Pick a table for the trigger");
-      if (!Array.isArray(au.steps) || au.steps.length > 50) fail("An automation can have up to 50 steps");
-      for (const s of au.steps) {
-        if (s.type === "sendEmail") {
-          for (const k of ["to", "subject", "body"] as const) {
-            if (typeof s[k] !== "string") fail("An email step needs a recipient, subject and message");
-            if (s[k].length > EMAIL_LIMITS[k]) fail(`The email ${k === "to" ? "recipient list" : k} is too long`);
-          }
-          if (!s.to.trim()) fail("An email step needs someone to send to");
-          continue;
-        }
-        if (s.type !== "updateRecord" && s.type !== "createRecord") fail("Unknown automation step");
-        const tableId = s.type === "createRecord" ? s.tableId : au.trigger.tableId;
-        if (!d.tables[tableId]) fail("A step points to a missing table");
-        for (const fid of Object.keys(s.values)) {
-          const f = d.fields[fid];
-          if (!f || f.tableId !== tableId || isComputed(f.type)) fail("A step sets a field that can't be set");
-        }
-      }
+      checkTrigger(d, au);
+      if (!Array.isArray(au.steps)) fail("Steps must be a list");
+      if (countSteps(au.steps) > MAX_STEPS) fail(`An automation can have up to ${MAX_STEPS} steps`);
+      // A schedule without a view runs with no record; steps can't update "the" record then.
+      const startTable = au.trigger.type === "schedule" && !au.trigger.viewId ? null : au.trigger.tableId;
+      checkSteps(d, au.steps, startTable, 0);
       d.put("automations", au);
       return;
     }

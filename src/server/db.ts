@@ -90,6 +90,19 @@ alter table action_log add column if not exists user_id text;
 -- Accounts that existed before email confirmation count as confirmed; new ones start unconfirmed.
 alter table users add column if not exists email_verified_at timestamptz default now();
 alter table users alter column email_verified_at drop default;
+create table if not exists automation_connections (
+  id text primary key,
+  base_id text not null references bases(id) on delete cascade,
+  kind text not null,
+  name text not null,
+  url text not null,
+  created_at timestamptz not null default now()
+);
+create table if not exists automation_schedule (
+  automation_id text primary key,
+  base_id text not null references bases(id) on delete cascade,
+  last_run timestamptz not null
+);
 create table if not exists email_verifications (
   token_hash text primary key,
   user_id text not null references users(id) on delete cascade,
