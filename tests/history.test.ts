@@ -12,7 +12,9 @@ const restore = (s: BaseState, before: BaseState, after: BaseState) => applyActi
 /** Everything a user can see; the autonumber counter only moves forward, so it's left out. */
 function visible(s: BaseState) {
   const tables = Object.fromEntries(Object.entries(s.tables).map(([id, t]) => [id, { ...t, nextAutoNumber: 0 }]));
-  return { name: s.base.name, tableOrder: s.tableOrder, tables, fields: s.fields, rows: s.rows, views: s.views, automations: s.automations };
+  // Undo is itself an edit, so "last modified" moves on; compare everything else.
+  const rows = Object.fromEntries(Object.entries(s.rows).map(([id, { modifiedAt: _a, modifiedBy: _b, ...r }]) => [id, r]));
+  return { name: s.base.name, tableOrder: s.tableOrder, tables, fields: s.fields, rows, views: s.views, automations: s.automations };
 }
 
 /** Do the change, undo it, redo it, and check each step lands where it should. */

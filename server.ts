@@ -202,7 +202,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (sub === "snapshot" && method === "GET") {
       await requireRole(user, baseId, "viewer");
       const state = await engine.getState(baseId);
-      return state ? send(res, 200, state) : send(res, 404, { error: "Base not found" });
+      return state ? send(res, 200, { ...state, people: await engine.people(baseId) }) : send(res, 404, { error: "Base not found" });
     }
     if (sub === "actions" && method === "POST") {
       await requireRole(user, baseId, "editor");
@@ -263,6 +263,15 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       const comment = await deleteComment(baseId, item, user, role === "owner");
       engine.publish(baseId, { type: "comment", event: "deleted", comment });
       return send(res, 200, { ok: true });
+    }
+    // POST /api/bases/:id/ai/:fieldId/generate {rowIds?} — fill (or refill) AI cells now.
+    if (sub === "ai" && item && parts[5] === "generate" && method === "POST") {
+      await requireRole(user, baseId, "editor");
+      const body = await readJson(req);
+      const state = await engine.getState(baseId);
+      if (!state) throw new ValidationError("Base not found");
+      const rowIds = Array.isArray(body.rowIds) ? body.rowIds.filter((x): x is string => typeof x === "string") : undefined;
+      return send(res, 200, { queued: engine.queueAiField(baseId, state, item, rowIds) });
     }
     if (sub === "deleted" && method === "GET") {
       await requireRole(user, baseId, "viewer");

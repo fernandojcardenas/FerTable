@@ -3,6 +3,7 @@
 
 import type { BaseState, Field, Row } from "./types";
 import { evaluate, FormulaError, parseFormula, toNumber, toText, type FNode, type FValue } from "./formula";
+import { formatDuration } from "./fieldTypes";
 
 export class CellError {
   constructor(public message: string) {}
@@ -106,6 +107,17 @@ export class Computer {
         return row.createdAt;
       case "autoNumber":
         return row.autoNumber;
+      case "lastModifiedTime":
+        return row.modifiedAt ?? row.createdAt;
+      case "lastModifiedBy":
+        return row.modifiedBy ? this.personName(row.modifiedBy) : row.modifiedAt ? "Automation" : null;
+      case "user":
+        return Array.isArray(raw) ? (raw as string[]).map((id) => this.personName(id)) : null;
+      case "button":
+        return field.options.button?.label ?? null;
+      case "ai":
+        if (row.aiErrors?.[field.id]) return new CellError(row.aiErrors[field.id]);
+        return typeof raw === "string" ? raw : null;
       case "count":
         return this.linkedRows(row, field.options.linkFieldId).length;
       case "lookup": {
@@ -183,6 +195,11 @@ export class Computer {
     return node;
   }
 
+  /** A member's name, from the people list the server sends with the base. */
+  personName(userId: string): string {
+    return this.state.people?.[userId]?.name ?? "Former member";
+  }
+
   primaryName(rowId: string): string {
     const row = this.state.rows[rowId];
     if (!row) return "";
@@ -203,7 +220,10 @@ export class Computer {
       case "date":
         return typeof v === "string" ? formatDate(v, Boolean(field.options.includeTime)) : "";
       case "createdTime":
+      case "lastModifiedTime":
         return typeof v === "string" ? formatDate(v, true) : "";
+      case "duration":
+        return typeof v === "number" ? formatDuration(v, field.options.durationFormat) : "";
       case "checkbox":
         return v ? "✓" : "";
       case "rollup": {

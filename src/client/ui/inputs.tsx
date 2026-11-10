@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, CellValue, Field, SelectChoice } from "@/shared/types";
-import { formatBytes, makeChoice } from "@/shared/fieldTypes";
+import { formatBytes, formatDuration, makeChoice } from "@/shared/fieldTypes";
 import { newId } from "@/shared/ids";
 import { AttachmentPreview, ChoiceChip, Dialog, useBase } from "./common";
+import { RatingStars, UserChips, UserPicker } from "./newFields";
 
 /** Pick (and create) options for a select field. Returns chosen ids through onChange. */
 export function SelectPicker({ field, value, onChange, onClose }: {
@@ -148,6 +149,24 @@ export function FieldInput({ field, value, onCommit }: { field: Field; value: Ce
     }
     case "attachment":
       return <AttachmentEditor value={(value as Attachment[] | null) ?? []} onChange={(next) => onCommit(next.length ? next : null)} />;
+    case "rating":
+      return <RatingStars field={field} value={typeof value === "number" ? value : null} onChange={(v) => onCommit(v)} />;
+    case "user": {
+      const ids = Array.isArray(value) ? (value as string[]) : [];
+      return (
+        <div>
+          <div className="row" style={{ flexWrap: "wrap", gap: 4, minHeight: 28 }}>
+            <UserChips ids={ids} />
+            <button className="btn ghost small" onClick={() => setPicker((p) => !p)}>{picker ? "Close" : ids.length ? "Change" : "+ Choose"}</button>
+          </div>
+          {picker && (
+            <div style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 8, marginTop: 6 }}>
+              <UserPicker field={field} value={ids} onChange={(next) => onCommit(next.length ? next : null)} onClose={() => setPicker(false)} />
+            </div>
+          )}
+        </div>
+      );
+    }
     case "link": {
       const ids = Array.isArray(value) ? (value as string[]) : [];
       return (
@@ -197,6 +216,7 @@ export function toEditText(field: Field, value: CellValue | undefined): string {
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
+  if (field.type === "duration" && typeof value === "number") return formatDuration(value, field.options.durationFormat);
   return String(value);
 }
 

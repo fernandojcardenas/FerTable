@@ -14,6 +14,7 @@
     "cleanup-files": "tsx scripts/cleanup-files.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@electric-sql/pglite": "0.5.11",
     "next": "16.4.3",
     "nodemailer": "10.2.1",

@@ -28,11 +28,20 @@ export const FIELD_TYPES: Record<FieldType, FieldTypeInfo> = {
   formula: { label: "Formula", icon: "ƒ", computed: true, description: "Compute a value from other fields." },
   createdTime: { label: "Created time", icon: "⏱", computed: true, description: "When the row was created." },
   autoNumber: { label: "Autonumber", icon: "1²", computed: true, description: "A number that counts up per row." },
+  rating: { label: "Rating", icon: "★", computed: false, description: "A score out of a few stars." },
+  duration: { label: "Duration", icon: "⏲", computed: false, description: "A length of time, like 1:30." },
+  barcode: { label: "Barcode", icon: "▥", computed: false, description: "A barcode or QR code value." },
+  user: { label: "User", icon: "👤", computed: false, description: "People in this base." },
+  button: { label: "Button", icon: "▣", computed: true, description: "Open a link or run an automation." },
+  lastModifiedTime: { label: "Last modified time", icon: "🕘", computed: true, description: "When the record last changed." },
+  lastModifiedBy: { label: "Last modified by", icon: "✍", computed: true, description: "Who last changed the record." },
+  ai: { label: "AI", icon: "✦", computed: true, description: "Text written by AI from a prompt." },
 };
 
 export const FIELD_TYPE_ORDER: FieldType[] = [
   "text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "attachment",
-  "email", "url", "phone", "link", "lookup", "rollup", "count", "formula", "createdTime", "autoNumber",
+  "email", "url", "phone", "rating", "duration", "barcode", "user", "link", "lookup", "rollup", "count", "formula",
+  "ai", "button", "createdTime", "lastModifiedTime", "lastModifiedBy", "autoNumber",
 ];
 
 export const CHOICE_COLORS = ["blue", "cyan", "teal", "green", "yellow", "orange", "red", "pink", "purple", "gray"];
@@ -54,6 +63,16 @@ export function defaultOptions(type: FieldType): FieldOptions {
       return { fn: "sum" };
     case "formula":
       return { expression: "" };
+    case "rating":
+      return { max: 5 };
+    case "duration":
+      return { durationFormat: "h:mm" };
+    case "user":
+      return { multiple: false };
+    case "button":
+      return { button: { label: "Open", kind: "url", url: "" } };
+    case "ai":
+      return { prompt: "" };
     default:
       return {};
   }
@@ -116,6 +135,22 @@ export function coerceValue(field: Field, value: unknown): CellValue {
       const out = [...new Set(ids)];
       return out.length ? out : null;
     }
+    case "rating": {
+      const n = Math.round(typeof value === "number" ? value : parseFloat(String(value)));
+      const max = Math.min(Math.max(field.options.max ?? 5, 1), 10);
+      return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : null;
+    }
+    case "duration": {
+      const secs = typeof value === "number" ? value : parseDuration(String(value));
+      return secs === null || !Number.isFinite(secs) || secs < 0 ? null : Math.round(secs);
+    }
+    case "barcode":
+      return String(value).replace(/[\r\n]+/g, " ").slice(0, 500);
+    case "user": {
+      const ids = [...new Set((Array.isArray(value) ? value : [value]).map(String).filter((id) => isId(id, "usr")))];
+      const out = field.options.multiple ? ids : ids.slice(0, 1);
+      return out.length ? out : null;
+    }
     default:
       return null; // computed fields never store values
   }
@@ -163,4 +198,26 @@ export function rollupKind(field: Field): "number" | "checkbox" | "text" {
     try { return resultKind(parseFormula(field.options.expression ?? "", { vars: ["VALUES"] })); } catch { return "text"; }
   }
   return fn === "concat" ? "text" : fn === "and" || fn === "or" ? "checkbox" : "number";
+}
+
+/** "1:30" → 5400 s, "1:02:03" → 3723 s, "90" → 90 minutes. Returns null when it isn't a duration. */
+export function parseDuration(text: string): number | null {
+  const t = text.trim();
+  if (!t) return null;
+  const parts = t.split(":");
+  if (parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p.trim()))) return null;
+  const n = parts.map((p) => parseFloat(p));
+  if (n.length === 1) return n[0] * 60;
+  if (n.length === 2) return n[0] * 3600 + n[1] * 60;
+  return n[0] * 3600 + n[1] * 60 + n[2];
+}
+
+/** 5400 → "1:30" (or "1:30:00" with seconds). */
+export function formatDuration(secs: number, format: "h:mm" | "h:mm:ss" = "h:mm"): string {
+  const s = Math.max(0, Math.round(secs));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, "0");
+  return format === "h:mm:ss" ? `${h}:${mm}:${String(sec).padStart(2, "0")}` : `${h}:${mm}`;
 }

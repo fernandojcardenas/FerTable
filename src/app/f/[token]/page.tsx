@@ -120,6 +120,15 @@ function PublicInput({ q, value, onChange }: { q: PublicQuestion; value: Answer;
       return <textarea id={id} className="textarea" rows={4} value={text} maxLength={10000} onChange={(e) => onChange(e.target.value)} />;
     case "number":
       return <input id={id} className="input" type="number" inputMode="decimal" value={text} onChange={(e) => onChange(e.target.value)} />;
+    case "rating":
+      return (
+        <select id={id} className="select" value={text} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Choose…</option>
+          {Array.from({ length: q.max ?? 5 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{"★".repeat(n)} ({n})</option>)}
+        </select>
+      );
+    case "duration":
+      return <input id={id} className="input" placeholder="h:mm, like 1:30" value={text} onChange={(e) => onChange(e.target.value)} />;
     case "checkbox":
       return <input id={id} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} style={{ width: 18, height: 18 }} />;
     case "date":

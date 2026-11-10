@@ -9,13 +9,14 @@ import { newId } from "@/shared/ids";
 import type { Attachment } from "@/shared/types";
 import { CellContent, Dialog, FieldIcon, isNumeric, Popover, useBase } from "./common";
 import { AttachmentEditor, LinkPicker, SelectPicker, toEditText } from "./inputs";
+import { RatingStars, UserPicker } from "./newFields";
 import { cellActions } from "./actions";
 import { prefillFromFilters } from "./prefill";
 
 type Pos = { rowId: string; fieldId: string };
 type Item = { kind: "group"; group: RowGroup; depth: number } | { kind: "row"; row: Row; index: number };
 
-const TEXTY = new Set(["text", "longText", "number", "email", "url", "phone"]);
+const TEXTY = new Set(["text", "longText", "number", "email", "url", "phone", "duration", "barcode"]);
 
 // Fixed heights let us work out where every row sits without rendering it.
 const ROW_H = 34;
@@ -199,6 +200,7 @@ export function GridView({ view }: { view: View }) {
     else if (k === "Escape") setSel(null);
     else if (k === " " && field.type === "checkbox") { e.preventDefault(); startEdit(sel); }
     else if ((k === "Backspace" || k === "Delete") && !isComputed(field.type)) { e.preventDefault(); setCell(row.id, field, null); }
+    else if (field.type === "rating" && /^[0-9]$/.test(k) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (client.ensureCanEdit()) setCell(row.id, field, k === "0" ? null : Number(k)); }
     else if (k.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && TEXTY.has(field.type)) { e.preventDefault(); startEdit(sel, k); }
   }
 
@@ -433,6 +435,20 @@ function CellEditor({ row, field, seed, onSet: rawSet, onDone }: {
       <div className="popover" style={{ top: "100%", left: 0 }} onMouseDown={(e) => e.stopPropagation()}>
         <SelectPicker field={field} value={ids} onClose={() => onDone()}
           onChange={(next, ch) => onSet(field.type === "multiSelect" ? next : next[0] ?? null, ch)} />
+      </div>
+    );
+  }
+  if (field.type === "rating") {
+    return (
+      <div className="popover" style={{ top: "100%", left: 0, padding: 8 }} onMouseDown={(e) => e.stopPropagation()}>
+        <RatingStars field={field} value={typeof row.cells[field.id] === "number" ? (row.cells[field.id] as number) : null} onChange={(v) => { onSet(v); onDone(); }} />
+      </div>
+    );
+  }
+  if (field.type === "user") {
+    return (
+      <div className="popover" style={{ top: "100%", left: 0, padding: 8 }} onMouseDown={(e) => e.stopPropagation()}>
+        <UserPicker field={field} value={(row.cells[field.id] as string[] | undefined) ?? []} onChange={(next) => onSet(next.length ? next : null)} onClose={() => onDone()} />
       </div>
     );
   }

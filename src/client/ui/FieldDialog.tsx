@@ -8,6 +8,7 @@ import { Computer } from "@/shared/compute";
 import { applyAction } from "@/shared/reducer";
 import { newId } from "@/shared/ids";
 import { Dialog, useBase } from "./common";
+import { NewFieldOptions } from "./newFields";
 
 const ROLLUP_FNS: { id: RollupFn; label: string }[] = [
   { id: "sum", label: "Sum" }, { id: "avg", label: "Average" }, { id: "min", label: "Minimum" }, { id: "max", label: "Maximum" },
@@ -183,6 +184,7 @@ export function FieldDialog({ tableId, fieldId, afterFieldId, presetType, onClos
         {type === "date" && (
           <label className="row"><input type="checkbox" checked={Boolean(opts.includeTime)} onChange={(e) => setOpts({ ...opts, includeTime: e.target.checked })} /> Include a time</label>
         )}
+        <NewFieldOptions type={type} opts={opts} setOpts={setOpts} tableFields={tableFields} existing={existing} />
 
         {type === "link" && (
           <div>

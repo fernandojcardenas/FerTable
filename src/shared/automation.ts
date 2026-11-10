@@ -50,6 +50,27 @@ export function triggerMatches(state: BaseState, auto: Automation, row: Row): bo
   return matchesFilters(new Computer(state), row, auto.trigger.filters);
 }
 
+/**
+ * A template with {fldId} placeholders replaced by the record's values, as text.
+ * With `encode`, values are URL-encoded (except a placeholder at the very start,
+ * which may hold a whole link).
+ */
+export function fillTemplate(state: BaseState, row: Row, template: string, now = new Date(), encode = false): string {
+  const c = new Computer(state, now);
+  return template.replace(/\{(fld[A-Za-z0-9]{14})\}/g, (_, id: string, offset: number) => {
+    const f = state.fields[id];
+    if (!f || f.tableId !== row.tableId) return "";
+    const v = c.value(row, f);
+    const text = v instanceof CellError ? "" : c.display(row, f);
+    return encode && offset > 0 ? encodeURIComponent(text) : text;
+  });
+}
+
+/** Field ids a template refers to. */
+export function templateRefs(template: string): string[] {
+  return [...template.matchAll(/\{(fld[A-Za-z0-9]{14})\}/g)].map((m) => m[1]);
+}
+
 /** Fill in step templates from the trigger record. Doesn't change anything. */
 export function planSteps(state: BaseState, auto: Automation, trigger: Row, now = new Date()): StepPlan {
   const c = new Computer(state, now);

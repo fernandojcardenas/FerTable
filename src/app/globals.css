@@ -324,3 +324,10 @@ textarea.cell-editor { height: 140px; bottom: auto; padding: 6px; resize: none; 
 .verify-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0; padding: 10px 14px; border-radius: 8px;
   border: 1px solid var(--accent, #6b7cff); background: var(--hover, rgba(127,127,127,.08)); }
 .public-link { border-top: 1px solid var(--line); padding-top: 12px; }
+
+.rating { display: inline-flex; gap: 1px; }
+.rating .star { color: var(--line); font-size: 15px; line-height: 1; background: none; border: 0; padding: 0 1px; cursor: default; }
+.rating button.star { cursor: pointer; }
+.rating .star.on { color: #f5b301; }
+.chip.user { background: var(--hover, rgba(127,127,127,.12)); }
+.cell-button { padding: 1px 8px; }

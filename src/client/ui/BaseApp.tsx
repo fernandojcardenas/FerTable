@@ -56,7 +56,7 @@ export default function BaseApp({ baseId }: { baseId: string }) {
     Promise.all([get<{ user: Me; role: Role }>("me"), get<BaseState>("snapshot")])
       .then(([access, snapshot]) => {
         if (cancelled) return;
-        c = new BaseClient(baseId, snapshot, access.role);
+        c = new BaseClient(baseId, snapshot, access.role, access.user.id);
         setMe(access.user);
         setClient(c);
       })

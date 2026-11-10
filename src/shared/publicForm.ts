@@ -6,7 +6,7 @@ import { coerceValue, isComputed } from "./fieldTypes";
 import { isAnswered, questionHelp, questionLabel, requiredIds } from "./forms";
 
 /** Question types a public form can ask. Links would show other records; attachments would allow anonymous uploads. */
-export const PUBLIC_TYPES = new Set<FieldType>(["text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "email", "url", "phone"]);
+export const PUBLIC_TYPES = new Set<FieldType>(["text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "email", "url", "phone", "rating", "duration", "barcode"]);
 
 export const PUBLIC_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
 export const MAX_ANSWER_LENGTH = 10_000;
@@ -19,6 +19,7 @@ export type PublicQuestion = {
   required: boolean;
   choices?: Pick<SelectChoice, "id" | "name" | "color">[];
   includeTime?: boolean;
+  max?: number;
 };
 
 export type PublicFormDefinition = {
@@ -53,6 +54,7 @@ export function publicFormDefinition(state: BaseState, view: View): PublicFormDe
       required: required.has(f.id),
       ...(f.type === "singleSelect" || f.type === "multiSelect" ? { choices: (f.options.choices ?? []).map(({ id, name, color }) => ({ id, name, color })) } : {}),
       ...(f.type === "date" ? { includeTime: Boolean(f.options.includeTime) } : {}),
+      ...(f.type === "rating" ? { max: Math.min(Math.max(f.options.max ?? 5, 1), 10) } : {}),
     })),
   };
 }

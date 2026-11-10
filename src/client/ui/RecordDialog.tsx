@@ -7,6 +7,7 @@ import { CellContent, Dialog, FieldIcon, useBase } from "./common";
 import { FieldInput } from "./inputs";
 import { cellActions } from "./actions";
 import { ActivityPanel } from "./Comments";
+import { RegenerateButton } from "./newFields";
 
 export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () => void }) {
   const { snap, client, openFieldDialog } = useBase();
@@ -56,7 +57,10 @@ export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () =>
               <div className="name"><FieldIcon field={f} /> {f.name}</div>
               <div style={{ minWidth: 0 }}>
                 {isComputed(f.type) || !canEdit ? (
-                  <div style={{ padding: "6px 0", whiteSpace: "pre-wrap" }}><CellContent row={row} field={f} detailed /></div>
+                  <div style={{ padding: "6px 0", whiteSpace: "pre-wrap" }}>
+                    <CellContent row={row} field={f} detailed />
+                    {f.type === "ai" && <div style={{ marginTop: 4 }}><RegenerateButton field={f} rowIds={[row.id]} /></div>}
+                  </div>
                 ) : (
                   <FieldInput field={f} value={row.cells[f.id]} onCommit={(v, ch) => client.dispatch(...cellActions(snap.state, row.id, f, v, ch))} />
                 )}

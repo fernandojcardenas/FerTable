@@ -67,7 +67,8 @@ export class BaseClient {
 
   private role: Role;
 
-  constructor(private baseId: string, initial: BaseState, role: Role = "editor") {
+  /** `me` is the signed-in user, stamped as "last modified by" on our own edits right away. */
+  constructor(private baseId: string, initial: BaseState, role: Role = "editor", private me: string | null = null) {
     this.role = role;
     this.confirmed = initial;
     this.loadHistory();
@@ -89,12 +90,12 @@ export class BaseClient {
     const at = new Date().toISOString();
     for (const p of this.pending) {
       try {
-        state = applyActions(state, p.actions, at);
+        state = applyActions(state, p.actions, at, this.me);
       } catch {
         // Something in this batch no longer applies: keep the parts that still do.
         for (const a of p.actions) {
           try {
-            state = applyAction(state, a, at);
+            state = applyAction(state, a, at, this.me);
           } catch {
             /* skipped; the server will reject it */
           }
@@ -164,7 +165,7 @@ export class BaseClient {
     if (actions.length === 0) return null;
     const before = this.snapshot.state;
     try {
-      const after = applyActions(before, actions, new Date().toISOString());
+      const after = applyActions(before, actions, new Date().toISOString(), this.me);
       return { before, after };
     } catch (e) {
       this.setError(e instanceof Error ? e.message : String(e));
@@ -351,7 +352,7 @@ export class BaseClient {
     }
     let s = this.confirmed;
     try {
-      s = applyActions(s, batch.actions, batch.at);
+      s = applyActions(s, batch.actions, batch.at, batch.userId ?? null);
     } catch {
       void this.resync();
       return;

@@ -118,7 +118,20 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
 
 - **Field types:** single line text, long text, number (decimal/integer/currency/percent),
   checkbox, single and multiple select, date (optional time), attachment, email, URL, phone,
-  link to another record (two-way), lookup, rollup, count, formula, created time, autonumber.
+  rating (1–10 stars; type a digit on a cell), duration (`1:30`), barcode, user (base members
+  only, checked on the server), link to another record (two-way), lookup, rollup, count,
+  formula, AI, button, created time, last modified time, last modified by, autonumber.
+- **Button fields** open a link built from the record (`https://…?q={Name}`, values are
+  URL-encoded; only `https:`, `mailto:` and `tel:` links) or run an automation on the record.
+- **AI fields** fill each record from a prompt such as `Summarize {Notes}` using an AI model
+  (`the model set in the settings`, change with `GRIDBASE_AI_MODEL`). The server needs `ANTHROPIC_API_KEY`
+  (or an `ant auth login` profile). Answers refresh when the fields the prompt uses change;
+  *Regenerate* refills one record or all. Limits: 2 at a time and 500 per base per hour
+  (`GRIDBASE_AI_CONCURRENCY`, `GRIDBASE_AI_PER_HOUR`). Problems (no key, refusals) show on
+  the cell and the last good answer is kept. `GRIDBASE_AI_FAKE=1` answers without calling the
+  API, for testing.
+- **Last modified time/by** are kept for every record; changes by automations, forms and AI
+  show as "Automation".
 - **Attachments:** upload or drop files (up to 25 MB each). They're stored in Postgres
   (`files` table) and served from `/api/files/…`. Only common images, PDFs and plain
   text open in the browser; everything else downloads, so uploads can't run scripts.

@@ -18,7 +18,15 @@ export type FieldType =
   | "count"
   | "formula"
   | "createdTime"
-  | "autoNumber";
+  | "autoNumber"
+  | "rating"
+  | "duration"
+  | "barcode"
+  | "user"
+  | "button"
+  | "lastModifiedTime"
+  | "lastModifiedBy"
+  | "ai";
 
 export type SelectChoice = { id: string; name: string; color: string };
 
@@ -39,7 +47,19 @@ export type FieldOptions = {
   fn?: RollupFn;
   /** Formula fields, and rollups with fn "formula" (which may use `values`). */
   expression?: string;
+  /** Rating: highest score (1–10). */
+  max?: number;
+  /** Duration display. */
+  durationFormat?: "h:mm" | "h:mm:ss";
+  /** User fields: allow several people. */
+  multiple?: boolean;
+  /** Button fields: what a click does. `url` may use {fldId} placeholders. */
+  button?: { label: string; kind: "url" | "automation"; url?: string; automationId?: string };
+  /** AI fields: the prompt, with {fldId} placeholders filled from the record. */
+  prompt?: string;
 };
+
+export type ButtonConfig = NonNullable<FieldOptions["button"]>;
 
 export type Field = {
   id: string;
@@ -61,7 +81,15 @@ export type Row = {
   cells: Record<string, CellValue>;
   createdAt: string;
   autoNumber: number;
+  /** When the record last changed and who changed it (null = automation, form or AI). */
+  modifiedAt?: string;
+  modifiedBy?: string | null;
+  /** AI fields whose last run failed, with why. */
+  aiErrors?: Record<string, string>;
 };
+
+/** Base members' names, sent with a snapshot so user fields can show names. */
+export type People = Record<string, { name: string; email: string }>;
 
 export type Table = {
   id: string;
@@ -147,6 +175,8 @@ export type BaseState = {
   rows: Record<string, Row>;
   views: Record<string, View>;
   automations: Record<string, Automation>;
+  /** Members' names (not saved with the base; filled in by the server). */
+  people?: People;
 };
 
 // ---- Actions: every change to a base is one of these ----
@@ -162,6 +192,8 @@ export type Action =
   | { type: "row.create"; rowId: string; tableId: string; cells?: Record<string, CellValue>; createdAt?: string; afterRowId?: string | null }
   | { type: "row.update"; rowId: string; cells: Record<string, CellValue> }
   | { type: "row.delete"; rowIds: string[] }
+  /** The server writes an AI field's result (clients can't send this). */
+  | { type: "ai.set"; rowId: string; fieldId: string; value: string | null; error?: string }
   /** Move rows (keeping their relative order) to just after afterRowId, or to the top when null. */
   | { type: "row.move"; rowIds: string[]; afterRowId: string | null }
   /**

@@ -37,6 +37,9 @@ class Draft {
   private copiedMaps = new Set<string>();
   private copied = new Set<string>();
 
+  /** Who and when, stamped on every record this change touches. */
+  stamp: { at: string; by: string | null } | null = null;
+
   constructor(private src: BaseState) {
     this.base = src.base;
     this.tableOrder = src.tableOrder;
@@ -73,7 +76,9 @@ class Draft {
     const r = this.rows[id] ?? fail(`Row ${id} not found`);
     if (this.copied.has(id)) return r;
     this.copied.add(id);
-    return (this.map("rows")[id] = { ...r, cells: { ...r.cells } });
+    const copy: Row = { ...r, cells: { ...r.cells } };
+    if (this.stamp) { copy.modifiedAt = this.stamp.at; copy.modifiedBy = this.stamp.by; }
+    return (this.map("rows")[id] = copy);
   }
   view(id: string): View {
     const v = this.views[id] ?? fail(`View ${id} not found`);
@@ -89,7 +94,9 @@ class Draft {
     delete (this.map(k) as Record<string, unknown>)[id];
   }
   snapshot(): BaseState {
-    return { base: this.base, tableOrder: this.tableOrder, ...this.maps };
+    const out: BaseState = { base: this.base, tableOrder: this.tableOrder, ...this.maps };
+    if (this.src.people) out.people = this.src.people;
+    return out;
   }
   finish(): BaseState {
     return this.snapshot();
@@ -155,6 +162,30 @@ function validateOptions(d: Draft, tableId: string, fieldId: string, type: Field
       if (o.fn && !ROLLUP_FNS.includes(o.fn)) fail("Unknown rollup summary");
       return { linkFieldId: lf.id, targetFieldId: tf.id, fn: o.fn ?? "sum" };
     }
+    case "rating":
+      return { max: Math.min(Math.max(Math.round(Number(o.max) || 5), 1), 10) };
+    case "duration":
+      return { durationFormat: o.durationFormat === "h:mm:ss" ? "h:mm:ss" : "h:mm" };
+    case "user":
+      return { multiple: Boolean(o.multiple) };
+    case "button": {
+      const b = o.button ?? { label: "Open", kind: "url" };
+      const label = String(b.label ?? "").trim().slice(0, 60) || "Open";
+      if (b.kind === "automation") {
+        if (b.automationId && !d.automations[b.automationId]) fail("That automation doesn't exist");
+        return { button: { label, kind: "automation", automationId: b.automationId } };
+      }
+      const url = String(b.url ?? "").slice(0, 2000);
+      if (url && !/^(https?:\/\/|mailto:|tel:|\{fld)/i.test(url.trim())) fail("Button links must start with https://, mailto: or tel:");
+      checkTemplateRefs(d, tableId, url);
+      return { button: { label, kind: "url", url } };
+    }
+    case "ai": {
+      const prompt = String(o.prompt ?? "");
+      if (prompt.length > 10_000) fail("The AI prompt is too long");
+      checkTemplateRefs(d, tableId, prompt);
+      return { prompt };
+    }
     case "formula": {
       const expr = (o.expression ?? "").trim();
       try {
@@ -172,6 +203,13 @@ function validateOptions(d: Draft, tableId: string, fieldId: string, type: Field
     }
     default:
       return {};
+  }
+}
+
+/** {fldId} placeholders must point at fields in this table. */
+function checkTemplateRefs(d: Draft, tableId: string, template: string) {
+  for (const m of template.matchAll(/\{(fld[A-Za-z0-9]{14})\}/g)) {
+    if (d.fields[m[1]]?.tableId !== tableId) fail("The text refers to a field that doesn't exist");
   }
 }
 
@@ -400,10 +438,9 @@ function checkForm(f: NonNullable<ViewConfig["form"]>) {
   }
 }
 
-export function applyAction(state: BaseState, action: Action, at?: string): BaseState {
-  const d = new Draft(state);
-  apply(d, action, at ?? "1970-01-01T00:00:00.000Z");
-  return d.finish();
+/** `by` is who made the change (a user id, or null for automations, forms and AI); it's stamped on the records it touches. */
+export function applyAction(state: BaseState, action: Action, at?: string, by: string | null = null): BaseState {
+  return applyActions(state, [action], at, by);
 }
 
 /**
@@ -411,9 +448,11 @@ export function applyAction(state: BaseState, action: Action, at?: string): Base
  * one, but big batches (imports) don't copy the row map for every action.
  * Throws if any action is invalid; the input state is never modified.
  */
-export function applyActions(state: BaseState, actions: Action[], at?: string): BaseState {
+export function applyActions(state: BaseState, actions: Action[], at?: string, by: string | null = null): BaseState {
   const d = new Draft(state);
-  for (const a of actions) apply(d, a, at ?? "1970-01-01T00:00:00.000Z");
+  const when = at ?? "1970-01-01T00:00:00.000Z";
+  d.stamp = { at: when, by };
+  for (const a of actions) apply(d, a, when);
   return d.finish();
 }
 
@@ -527,6 +566,7 @@ function apply(d: Draft, a: Action, at: string): void {
       requireNewId(d, a.rowId, "rec", d.rows);
       const t = d.table(a.tableId);
       const row: Row = { id: a.rowId, tableId: a.tableId, cells: {}, createdAt: a.createdAt ?? at, autoNumber: t.nextAutoNumber };
+      if (d.stamp) { row.modifiedAt = d.stamp.at; row.modifiedBy = d.stamp.by; }
       t.nextAutoNumber += 1;
       d.put("rows", row);
       const idx = a.afterRowId ? t.rowOrder.indexOf(a.afterRowId) : -1;
@@ -538,6 +578,26 @@ function apply(d: Draft, a: Action, at: string): void {
     case "row.update": {
       const row = d.rows[a.rowId] ?? fail("Row not found");
       writeCells(d, row, a.cells);
+      return;
+    }
+    case "ai.set": {
+      const row = d.rows[a.rowId] ?? fail("Row not found");
+      const f = d.fields[a.fieldId];
+      if (!f || f.type !== "ai" || f.tableId !== row.tableId) fail("Not an AI field");
+      if (a.value !== null && (typeof a.value !== "string" || a.value.length > 100_000)) fail("AI result is too long");
+      const r = d.row(row.id);
+      if (a.value) r.cells[f!.id] = a.value;
+      else delete r.cells[f!.id];
+      const errors = { ...(r.aiErrors ?? {}) };
+      if (a.error) errors[f!.id] = String(a.error).slice(0, 500);
+      else delete errors[f!.id];
+      if (Object.keys(errors).length) r.aiErrors = errors;
+      else delete r.aiErrors;
+      // AI writes don't count as someone editing the record.
+      r.modifiedAt = row.modifiedAt;
+      r.modifiedBy = row.modifiedBy;
+      if (r.modifiedAt === undefined) delete r.modifiedAt;
+      if (r.modifiedBy === undefined) delete r.modifiedBy;
       return;
     }
     case "link.add":

@@ -31,6 +31,8 @@ function setup() {
 }
 
 const links = (s: BaseState, rowId: string, fieldId: string) => s.rows[rowId].cells[fieldId] ?? [];
+/** Records without their "last modified" stamp (undo is itself an edit, so that moves on). */
+const plain = (rows: BaseState["rows"]) => Object.fromEntries(Object.entries(rows).map(([id, { modifiedAt: _a, modifiedBy: _b, ...r }]) => [id, r]));
 
 test("link.add appends, updates the other side, and repeating it changes nothing", () => {
   const { s, ids } = setup();
@@ -100,9 +102,9 @@ test("undo and redo of link changes are exact", () => {
   ] as Action[]) {
     const after = run(s, [a]);
     const undone = undo(after, s, after);
-    assert.deepEqual(undone.rows, s.rows, `undo ${a.type}`);
+    assert.deepEqual(plain(undone.rows), plain(s.rows), `undo ${a.type}`);
     const redone = undo(undone, after, undone);
-    assert.deepEqual(redone.rows, after.rows, `redo ${a.type}`);
+    assert.deepEqual(plain(redone.rows), plain(after.rows), `redo ${a.type}`);
   }
 });
 
@@ -140,5 +142,5 @@ test("undo steps saved before this change (whole link lists) still work", () => 
     patch: { rows: { [ids.p1]: { kind: "cells", cells: { [ids.link]: [ids.t1, ids.t2] } }, [ids.t3]: { kind: "cells", cells: { [ids.inverse]: null } } } },
   };
   const undone = run(after, [oldStyle]);
-  assert.deepEqual(undone.rows, s.rows);
+  assert.deepEqual(plain(undone.rows), plain(s.rows));
 });

@@ -5,6 +5,7 @@ import type { BaseClient, ClientSnapshot } from "../store";
 import type { Attachment, CellValue, Field, Row } from "@/shared/types";
 import { FIELD_TYPES, isImage, rollupKind } from "@/shared/fieldTypes";
 import { toText, type FValue } from "@/shared/formula";
+import { ButtonCell, RatingStars, UserChips } from "./newFields";
 
 // ---- shared context for the open base ----
 
@@ -163,6 +164,12 @@ export function CellContent({ row, field, detailed }: { row: Row; field: Field; 
       );
     case "lookup":
       return <LookupContent row={row} field={field} detailed={detailed} />;
+    case "rating":
+      return typeof raw === "number" ? <RatingStars field={field} value={raw} /> : null;
+    case "user":
+      return Array.isArray(raw) ? <UserChips ids={raw as string[]} /> : null;
+    case "button":
+      return <ButtonCell row={row} field={field} />;
     case "url": {
       const text = c.display(row, field);
       return text ? <a href={/^https?:\/\//.test(text) ? text : `https://${text}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{text}</a> : null;
@@ -173,7 +180,7 @@ export function CellContent({ row, field, detailed }: { row: Row; field: Field; 
 }
 
 export const isNumeric = (f: Field) =>
-  f.type === "number" || f.type === "count" || f.type === "autoNumber" || (f.type === "rollup" && rollupKind(f) === "number");
+  f.type === "number" || f.type === "count" || f.type === "autoNumber" || f.type === "duration" || (f.type === "rollup" && rollupKind(f) === "number");
 
 /** Small preview of an attachment: the image itself, or a file-type badge. */
 export function AttachmentPreview({ a, size = 22 }: { a: Attachment; size?: number }) {

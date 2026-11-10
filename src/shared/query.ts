@@ -9,12 +9,12 @@ export type FilterKind = "text" | "number" | "checkbox" | "select" | "multi" | "
 
 export function filterKind(field: Field): FilterKind {
   switch (field.type) {
-    case "number": case "count": case "autoNumber": return "number";
+    case "number": case "count": case "autoNumber": case "rating": case "duration": return "number";
     case "rollup": return rollupKind(field);
     case "checkbox": return "checkbox";
     case "singleSelect": return "select";
     case "multiSelect": return "multi";
-    case "date": case "createdTime": return "date";
+    case "date": case "createdTime": case "lastModifiedTime": return "date";
     default: return "text";
   }
 }
@@ -143,9 +143,9 @@ function sortKey(c: Computer, row: Row, field: Field): { empty: boolean; n?: num
     }
     case "checkbox":
       return { empty: false, n: v ? 1 : 0 };
-    case "number": case "count": case "autoNumber": case "rollup":
+    case "number": case "count": case "autoNumber": case "rollup": case "rating": case "duration":
       return typeof v === "number" ? { empty: false, n: v } : { empty: false, s: toText(v).toLowerCase() };
-    case "date": case "createdTime":
+    case "date": case "createdTime": case "lastModifiedTime":
       return { empty: false, s: toText(v) };
     case "formula":
       return typeof v === "number" ? { empty: false, n: v } : { empty: false, s: toText(v).toLowerCase() };
