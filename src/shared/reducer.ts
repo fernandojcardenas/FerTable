@@ -3,7 +3,7 @@
 // It must be deterministic: anything time-based comes from the action itself.
 
 import type {
-  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, RestorePatch, Row, Table, View, ViewConfig, ViewType,
+  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, RestorePatch, Row, Table, TableSync, View, ViewConfig, ViewType,
 } from "./types";
 import { applyOrderPatch } from "./history";
 import { choicesFromText, coerceValue, defaultOptions, isComputed } from "./fieldTypes";
@@ -387,6 +387,7 @@ function writeCells(d: Draft, row: Row, cells: Record<string, CellValue>) {
     const field = d.fields[fieldId];
     if (!field || field.tableId !== row.tableId) fail(`Field ${fieldId} is not in this table`);
     if (isComputed(field.type)) fail(`"${field.name}" is computed and can't be edited`);
+    if (field.syncSourceFieldId) fail(`"${field.name}" is synced from another base and can't be edited here`);
     if (field.type === "link") {
       setLinkCell(d, field, row.id, coerceValue(field, raw));
       continue;
@@ -396,6 +397,114 @@ function writeCells(d: Draft, row: Row, cells: Record<string, CellValue>) {
     if (v === null || v === false) delete r.cells[fieldId];
     else r.cells[fieldId] = v;
   }
+}
+
+const SYNC_ID = /^[A-Za-z0-9]{1,40}$/;
+
+function checkSyncConfig(c: TableSync): TableSync {
+  for (const k of ["sourceBaseId", "sourceTableId", "sourceViewId", "createdBy"] as const) {
+    if (typeof c?.[k] !== "string" || !SYNC_ID.test(c[k])) fail("The sync settings aren't valid");
+  }
+  return { sourceBaseId: c.sourceBaseId, sourceTableId: c.sourceTableId, sourceViewId: c.sourceViewId, createdBy: c.createdBy,
+    sourceLabel: String(c.sourceLabel ?? "").slice(0, 300), lastSyncAt: null, error: null };
+}
+
+/** Field types a sync can create (everything else arrives as text or a number). */
+const SYNC_TYPES = new Set<FieldType>(["text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "email", "url", "phone", "rating", "duration", "barcode"]);
+export const MAX_SYNC_ROWS = 10_000;
+
+/** Write a sync: add/change/drop synced fields, upsert rows matched by source record, remove the rest. */
+function applySync(d: Draft, a: Extract<Action, { type: "sync.apply" }>, at: string) {
+  const t0 = d.tables[a.tableId] ?? fail("Table not found");
+  if (!t0.sync) fail("That table isn't synced");
+  if (!Array.isArray(a.fields) || !Array.isArray(a.upserts) || !Array.isArray(a.deleteRowIds) || !Array.isArray(a.removeFieldIds)) fail("Invalid sync");
+  if (a.upserts.length > MAX_SYNC_ROWS) fail("Too many records to sync");
+  const t = d.table(a.tableId);
+  if (a.error) {
+    // The source couldn't be read: keep the last good copy and say why.
+    t.sync = { ...t.sync!, error: String(a.error).slice(0, 500) };
+    return;
+  }
+  for (const id of a.removeFieldIds) {
+    const f = d.fields[id];
+    if (f && f.tableId === t.id && f.syncSourceFieldId && f.id !== t.primaryFieldId) deleteField(d, id, true);
+  }
+  const allowed = new Set<string>();
+  for (const def of a.fields) {
+    if (!SYNC_TYPES.has(def.fieldType)) fail("A synced field has a type that can't be synced");
+    const existing = d.fields[def.fieldId];
+    const name = cleanName(def.name, "Field");
+    if (existing) {
+      if (existing.tableId !== t.id || !existing.syncSourceFieldId) fail("Invalid sync field");
+      const f = d.field(def.fieldId);
+      const options = validateOptions(d, t.id, f.id, def.fieldType, def.options);
+      if (f.type !== def.fieldType) {
+        for (const rowId of t.rowOrder) if (d.rows[rowId] && f.id in d.rows[rowId].cells) delete d.row(rowId).cells[f.id];
+      }
+      f.type = def.fieldType;
+      f.options = options;
+      f.syncSourceFieldId = def.sourceFieldId;
+      if (f.name !== name) {
+        // Keep the source's name unless someone here already uses it.
+        if (!Object.values(d.fields).some((x) => x.tableId === t.id && x.id !== f.id && x.name.toLowerCase() === name.toLowerCase())) f.name = name;
+      }
+    } else {
+      requireNewId(d, def.fieldId, "fld", d.fields);
+      let unique = name;
+      for (let n = 2; Object.values(d.fields).some((x) => x.tableId === t.id && x.name.toLowerCase() === unique.toLowerCase()); n++) unique = `${name} (${n})`;
+      const options = validateOptions(d, t.id, def.fieldId, def.fieldType, def.options);
+      d.put("fields", { id: def.fieldId, tableId: t.id, name: unique, type: def.fieldType, options, syncSourceFieldId: def.sourceFieldId });
+      t.fieldOrder.push(def.fieldId);
+      hideInCardViews(d, def.fieldId);
+    }
+    allowed.add(def.fieldId);
+  }
+  const bySource = new Map<string, string>();
+  for (const id of t.rowOrder) { const r = d.rows[id]; if (r?.sourceRowId) bySource.set(r.sourceRowId, id); }
+  const newOrder: string[] = [];
+  for (const u of a.upserts) {
+    if (typeof u.sourceRowId !== "string" || !SYNC_ID.test(u.sourceRowId)) fail("Invalid sync record");
+    let rowId = bySource.get(u.sourceRowId);
+    if (!rowId) {
+      requireNewId(d, u.rowId, "rec", d.rows);
+      rowId = u.rowId;
+      d.put("rows", { id: rowId, tableId: t.id, cells: {}, createdAt: at, autoNumber: t.nextAutoNumber, sourceRowId: u.sourceRowId, modifiedAt: at, modifiedBy: null });
+      t.nextAutoNumber += 1;
+      bySource.set(u.sourceRowId, rowId);
+    }
+    const row = d.rows[rowId];
+    let changed = false;
+    const next: Record<string, CellValue> = {};
+    for (const [fid, raw] of Object.entries(u.cells ?? {})) {
+      if (!allowed.has(fid)) fail("A synced record sets a field that isn't synced");
+      const v = coerceValue(d.fields[fid], raw);
+      if (v !== null && v !== false) next[fid] = v;
+    }
+    for (const fid of allowed) {
+      if (JSON.stringify(row.cells[fid] ?? null) !== JSON.stringify(next[fid] ?? null)) { changed = true; break; }
+    }
+    if (changed) {
+      const r = d.row(rowId);
+      for (const fid of allowed) { if (fid in next) r.cells[fid] = next[fid]; else delete r.cells[fid]; }
+      r.modifiedAt = at;
+      r.modifiedBy = null;
+    }
+    newOrder.push(rowId);
+  }
+  const keep = new Set(newOrder);
+  const toDelete = a.deleteRowIds.filter((id) => d.rows[id]?.tableId === t.id && !keep.has(id));
+  for (const id of toDelete) {
+    for (const fid of t.fieldOrder) {
+      const f = d.fields[fid];
+      if (f?.type === "link" && d.rows[id].cells[fid]) setLinkCell(d, f, id, null);
+    }
+    d.remove("rows", id);
+  }
+  // Rows follow the source view's order.
+  const gone = new Set(toDelete);
+  const extra = t.rowOrder.filter((id) => !keep.has(id) && !gone.has(id) && d.rows[id]);
+  t.rowOrder = [...newOrder, ...extra];
+  t.sync = { ...t.sync!, sourceLabel: String(a.sourceLabel ?? "").slice(0, 300), lastSyncAt: at, error: a.error ? String(a.error).slice(0, 500) : null };
 }
 
 /** Remove a field and every reference to it. */
@@ -554,8 +663,10 @@ function apply(d: Draft, a: Action, at: string): void {
       requireNewId(d, a.viewId, "viw", d.views);
       const name = cleanName(a.name, "Table");
       if (Object.values(d.tables).some((t) => t.name.toLowerCase() === name.toLowerCase())) fail(`A table named "${name}" already exists`);
-      d.put("tables", { id: a.tableId, name, primaryFieldId: a.primaryFieldId, fieldOrder: [a.primaryFieldId], rowOrder: [], viewOrder: [a.viewId], nextAutoNumber: 1 });
-      d.put("fields", { id: a.primaryFieldId, tableId: a.tableId, name: "Name", type: "text", options: {} });
+      const sync = a.sync ? checkSyncConfig(a.sync) : undefined;
+      d.put("tables", { id: a.tableId, name, primaryFieldId: a.primaryFieldId, fieldOrder: [a.primaryFieldId], rowOrder: [], viewOrder: [a.viewId], nextAutoNumber: 1, ...(sync ? { sync } : {}) });
+      // A synced table's primary field copies the source's primary field (filled in by the first sync).
+      d.put("fields", { id: a.primaryFieldId, tableId: a.tableId, name: "Name", type: "text", options: {}, ...(sync ? { syncSourceFieldId: "primary" } : {}) });
       d.put("views", { id: a.viewId, tableId: a.tableId, name: "Grid view", type: "grid", config: defaultViewConfig() });
       d.tableOrder = [...d.tableOrder, a.tableId];
       return;
@@ -599,6 +710,7 @@ function apply(d: Draft, a: Action, at: string): void {
     }
     case "field.update": {
       const old = d.fields[a.fieldId] ?? fail("Field not found");
+      if (old.syncSourceFieldId && (a.fieldType !== undefined || a.options !== undefined)) fail("Synced fields take their type and settings from the source base");
       const table = d.tables[old.tableId];
       const f = d.field(a.fieldId);
       if (a.name !== undefined) {
@@ -635,6 +747,7 @@ function apply(d: Draft, a: Action, at: string): void {
     case "field.delete": {
       const f = d.fields[a.fieldId] ?? fail("Field not found");
       if (d.tables[f.tableId].primaryFieldId === f.id) fail("The primary field can't be deleted");
+      if (f.syncSourceFieldId) fail("Synced fields come from the source view; hide the field, or hide it in the source view to stop syncing it");
       deleteField(d, f.id, true);
       return;
     }
@@ -649,6 +762,7 @@ function apply(d: Draft, a: Action, at: string): void {
 
     case "row.create": {
       if (!d.tables[a.tableId]) fail("Table not found");
+      if (d.tables[a.tableId].sync) fail("Records in a synced table come from the source base");
       requireNewId(d, a.rowId, "rec", d.rows);
       const t = d.table(a.tableId);
       const row: Row = { id: a.rowId, tableId: a.tableId, cells: {}, createdAt: a.createdAt ?? at, autoNumber: t.nextAutoNumber };
@@ -666,6 +780,8 @@ function apply(d: Draft, a: Action, at: string): void {
       writeCells(d, row, a.cells);
       return;
     }
+    case "sync.apply":
+      return applySync(d, a, at);
     case "ai.set": {
       const row = d.rows[a.rowId] ?? fail("Row not found");
       const f = d.fields[a.fieldId];
@@ -707,6 +823,7 @@ function apply(d: Draft, a: Action, at: string): void {
     case "row.delete": {
       const ids = a.rowIds.filter((id) => d.rows[id]);
       if (ids.length === 0) fail("Row not found");
+      if (ids.some((id) => d.tables[d.rows[id].tableId]?.sync)) fail("Records in a synced table come from the source base");
       for (const id of ids) {
         const row = d.rows[id];
         if (!row) continue;

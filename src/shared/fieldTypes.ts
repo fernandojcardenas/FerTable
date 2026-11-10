@@ -50,6 +50,11 @@ export function isComputed(type: FieldType): boolean {
   return FIELD_TYPES[type].computed;
 }
 
+/** Fields people can't type into: computed ones, and fields copied by a table sync. */
+export function isReadOnly(field: Pick<Field, "type" | "syncSourceFieldId">): boolean {
+  return FIELD_TYPES[field.type].computed || Boolean(field.syncSourceFieldId);
+}
+
 export function defaultOptions(type: FieldType): FieldOptions {
   switch (type) {
     case "number":

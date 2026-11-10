@@ -2,7 +2,7 @@
 // are checked before they become a record. The server never trusts the page.
 
 import type { BaseState, CellValue, Field, FieldType, FormConfig, SelectChoice, View } from "./types";
-import { coerceValue, isComputed } from "./fieldTypes";
+import { coerceValue, isReadOnly } from "./fieldTypes";
 import { isAnswered, questionHelp, questionLabel, requiredIds } from "./forms";
 
 /** Question types a public form can ask. Links would show other records; attachments would allow anonymous uploads. */
@@ -32,7 +32,7 @@ export type PublicFormDefinition = {
 
 /** The form's questions that can be asked publicly, in form order. */
 export function publicFields(state: BaseState, form: FormConfig): Field[] {
-  return form.fieldIds.map((id) => state.fields[id]).filter((f): f is Field => Boolean(f) && !isComputed(f.type) && PUBLIC_TYPES.has(f.type));
+  return form.fieldIds.map((id) => state.fields[id]).filter((f): f is Field => Boolean(f) && !isReadOnly(f) && PUBLIC_TYPES.has(f.type));
 }
 
 /** Everything the public page needs, and nothing else (no records, no other fields, no member names). */

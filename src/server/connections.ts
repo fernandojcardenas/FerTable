@@ -83,18 +83,18 @@ export function isPrivateAddress(ip: string): boolean {
  * actually made (so a DNS change can't point it inside the network), redirects aren't
  * followed, and slow or huge answers are cut off.
  */
-export function safePost(url: string, body: unknown, timeoutMs = 10_000): Promise<{ status: number }> {
+export function safePost(url: string, body: unknown, timeoutMs = 10_000, extraHeaders: Record<string, string> = {}): Promise<{ status: number }> {
   const u = new URL(url);
   if (u.protocol !== "https:") return Promise.reject(new Error("Only https addresses can be called"));
   // Node never calls `lookup` for a literal IP, so check those here.
   const literal = u.hostname.replace(/^\[|\]$/g, "");
   if (isIP(literal) && isPrivateAddress(literal)) return Promise.reject(new Error("That address is inside a private network"));
-  const data = Buffer.from(JSON.stringify(body));
+  const data = Buffer.from(typeof body === "string" ? body : JSON.stringify(body));
   if (data.length > 200_000) return Promise.reject(new Error("The message is too large"));
   return new Promise((resolve, reject) => {
     const req = request(u, {
       method: "POST",
-      headers: { "content-type": "application/json", "content-length": data.length, "user-agent": "gridbase-automation" },
+      headers: { "content-type": "application/json", "content-length": data.length, "user-agent": "gridbase-automation", ...extraHeaders },
       timeout: timeoutMs,
       lookup: (hostname, options, cb) => {
         lookup(hostname, { ...options, all: false }, (err, address, family) => {

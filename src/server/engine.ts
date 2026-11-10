@@ -17,6 +17,9 @@ import { starterTableActions } from "../shared/starter";
 import { rowHistory, type DeletedSnapshot } from "../shared/activity";
 import { newId } from "../shared/ids";
 import { getDb, type Queryable } from "./db";
+import { deliverWebhooks } from "./webhooks";
+import { buildSync, sourceLabel } from "../shared/sync";
+import { roleFor } from "./auth";
 
 type Listener = (msg: ServerMessage) => void;
 
@@ -116,7 +119,9 @@ export class Engine {
   /** Apply a batch from a client. Throws ValidationError if any action is invalid (nothing is saved). */
   async apply(baseId: string, req: ApplyRequest, source: ActionBatch["source"] = "client"): Promise<ActionBatch> {
     const result = await this.withLock(baseId, () => this.applyLocked(baseId, req, source));
-    if (source === "client") {
+    deliverWebhooks(baseId, result.before, result.after, result.batch, () => this.people(baseId)).catch((e) => console.error("webhook error", e));
+    this.scheduleSyncsFrom(baseId);
+    if (source === "client" || source === "api") {
       // Automations run after the lock is released, as their own transactions.
       this.runAutomations(baseId, result.before, result.after, result.batch).catch((e) => console.error("automation error", e));
     }
@@ -209,7 +214,10 @@ export class Engine {
     if (req.actions.length > 5000) throw new ValidationError("Too many actions in one request");
 
     // Only the server writes AI results.
-    if (source === "client" && req.actions.some((a) => a.type === "ai.set")) throw new ValidationError("AI fields are filled in by the server");
+    if (source === "client" || source === "api") {
+      if (req.actions.some((a) => a.type === "ai.set")) throw new ValidationError("AI fields are filled in by the server");
+      if (req.actions.some((a) => a.type === "sync.apply" || (a.type === "table.create" && a.sync))) throw new ValidationError("Synced tables are set up and filled in by the server");
+    }
     await this.checkPeople(baseId, before, req.actions);
 
     const at = new Date().toISOString();
@@ -650,6 +658,114 @@ export class Engine {
     return this.runOne(baseId, auto, rowId, state!.base.txn);
   }
 
+  // ---- synced tables ----
+
+  private syncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private syncing = new Map<string, Promise<void>>();
+
+  /** Copy a view from another base into a new synced table here. Needs editor access to the source base. */
+  async createSyncedTable(targetBaseId: string, userId: string, sourceBaseId: unknown, sourceViewId: unknown): Promise<string> {
+    if (typeof sourceBaseId !== "string" || typeof sourceViewId !== "string") throw new ValidationError("Pick a base and a view to sync");
+    const role = await roleFor(userId, sourceBaseId);
+    if (!role) throw new ValidationError("Base not found");
+    if (role !== "owner" && role !== "editor") throw new ValidationError("You need editor access to a base to sync its data elsewhere");
+    const source = await this.getState(sourceBaseId);
+    const view = source?.views[sourceViewId];
+    if (!source || !view) throw new ValidationError("That view no longer exists");
+    if (view.type !== "grid") throw new ValidationError("Only grid views can be synced");
+    const target = await this.getState(targetBaseId);
+    if (!target) throw new ValidationError("Base not found");
+    const base = source.tables[view.tableId].name;
+    let name = base;
+    for (let n = 2; Object.values(target.tables).some((t) => t.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} (${n})`;
+    const tableId = newId("tbl");
+    await this.apply(targetBaseId, {
+      clientId: null, requestId: null, userId, actor: "Sync",
+      actions: [{ type: "table.create", tableId, name, primaryFieldId: newId("fld"), viewId: newId("viw"),
+        sync: { sourceBaseId, sourceTableId: view.tableId, sourceViewId, sourceLabel: sourceLabel(source, view), createdBy: userId, lastSyncAt: null, error: null } }],
+    }, "sync");
+    await this.runSync(targetBaseId, tableId);
+    return tableId;
+  }
+
+  /** Bring one synced table up to date (one run at a time per table; a request during a run runs once more after). */
+  runSync(targetBaseId: string, tableId: string): Promise<void> {
+    const key = `${targetBaseId}:${tableId}`;
+    const prev = this.syncing.get(key) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(() => this.syncOnce(targetBaseId, tableId));
+    this.syncing.set(key, next);
+    void next.finally(() => { if (this.syncing.get(key) === next) this.syncing.delete(key); }).catch(() => {});
+    return next;
+  }
+
+  private async syncOnce(targetBaseId: string, tableId: string) {
+    const target = await this.getState(targetBaseId);
+    const t = target?.tables[tableId];
+    if (!target || !t?.sync) return;
+    const cfg = t.sync;
+    let error: string | null = null;
+    const role = await roleFor(cfg.createdBy, cfg.sourceBaseId);
+    const raw = role ? await this.getState(cfg.sourceBaseId) : null;
+    const view = raw?.views[cfg.sourceViewId];
+    if (!role) error = "The person who set up this sync can no longer open the source base";
+    else if (role !== "owner" && role !== "editor") error = "The person who set up this sync no longer has editor access to the source base";
+    else if (!raw) error = "The source base was deleted";
+    else if (!view || view.tableId !== cfg.sourceTableId) error = "The source view was deleted";
+    let action: Action | null;
+    if (error) {
+      if (t.sync.error === error) return;
+      action = { type: "sync.apply", tableId, fields: [], removeFieldIds: [], upserts: [], deleteRowIds: [], sourceLabel: cfg.sourceLabel, error };
+    } else {
+      const source = { ...raw!, people: await this.people(cfg.sourceBaseId) };
+      action = buildSync(source, view!, target, t);
+    }
+    if (!action) return;
+    try {
+      await this.apply(targetBaseId, { clientId: null, requestId: null, actions: [action], actor: "Sync" }, "sync");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.apply(targetBaseId, { clientId: null, requestId: null, actor: "Sync",
+        actions: [{ type: "sync.apply", tableId, fields: [], removeFieldIds: [], upserts: [], deleteRowIds: [], sourceLabel: cfg.sourceLabel, error: `Couldn't sync: ${msg}` }] }, "sync").catch(() => {});
+    }
+  }
+
+  /** After a change to a base, refresh the tables that sync from it (batched over a couple of seconds). */
+  scheduleSyncsFrom(sourceBaseId: string) {
+    if (this.syncTimers.has(sourceBaseId)) return;
+    const timer = setTimeout(() => {
+      this.syncTimers.delete(sourceBaseId);
+      void this.syncTablesFrom(sourceBaseId).catch((e) => console.error("sync error", e));
+    }, Number(process.env.GRIDBASE_SYNC_DELAY_MS ?? 2000));
+    timer.unref?.();
+    this.syncTimers.set(sourceBaseId, timer);
+  }
+
+  async syncTablesFrom(sourceBaseId: string | null): Promise<number> {
+    const db = await getDb();
+    const { rows } = await db.query<{ base_id: string; id: string }>(
+      sourceBaseId
+        ? "select base_id, id from tables_ where data->'sync'->>'sourceBaseId' = $1"
+        : "select base_id, id from tables_ where data ? 'sync'",
+      sourceBaseId ? [sourceBaseId] : [],
+    );
+    for (const r of rows) await this.runSync(r.base_id, r.id);
+    return rows.length;
+  }
+
+  /** Bases (other than this one) the user can sync from, with their grid views. */
+  async syncSources(userId: string, exceptBaseId: string) {
+    const out = [];
+    for (const b of await this.listBases(userId)) {
+      if (b.id === exceptBaseId || (b.role !== "owner" && b.role !== "editor")) continue;
+      const s = await this.getState(b.id);
+      if (!s) continue;
+      out.push({ id: b.id, name: s.base.name, tables: s.tableOrder.map((id) => s.tables[id]).filter((t) => !t.sync).map((t) => ({
+        id: t.id, name: t.name, views: t.viewOrder.map((v) => s.views[v]).filter((v) => v?.type === "grid").map((v) => ({ id: v.id, name: v.name })),
+      })) });
+    }
+    return out;
+  }
+
   // ---- scheduled automations ----
 
   private scheduler: ReturnType<typeof setInterval> | null = null;
@@ -659,6 +775,8 @@ export class Engine {
     if (this.scheduler) return;
     this.scheduler = setInterval(() => void this.runSchedules().catch((e) => console.error("schedule error", e)), 60_000);
     setTimeout(() => void this.runSchedules().catch((e) => console.error("schedule error", e)), 5_000);
+    // Synced tables also refresh every 15 minutes, which catches lost access and missed changes.
+    setInterval(() => void this.syncTablesFrom(null).catch((e) => console.error("sync error", e)), 15 * 60_000).unref?.();
   }
 
   /** Run schedules that came due since their last run. A new schedule waits for its first due time. */

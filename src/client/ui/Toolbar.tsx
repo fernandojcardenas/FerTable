@@ -200,7 +200,7 @@ export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => 
         </label>
       )}
       <span className="spacer" />
-      {view.type !== "form" && <button className="btn primary" onClick={onAddRecord}>+ Add record</button>}
+      {view.type !== "form" && !table?.sync && <button className="btn primary" onClick={onAddRecord}>+ Add record</button>}
     </div>
   );
 }

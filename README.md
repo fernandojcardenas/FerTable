@@ -215,7 +215,38 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     addresses. The server checks schedules every minute (`automation_schedule`
     keeps the last run). A new schedule waits for its first due time.
 
+- **Public developer API** (`/v1`, `src/server/publicApi.ts`), shaped like Airtable's:
+  - Records are `{ id, createdTime, fields }`, with fields keyed by name. Select
+    options are given by name, links as record ids, and people as
+    `{ id, name, email }`.
+  - Endpoints: `GET/POST/PATCH/PUT/DELETE /v1/:baseId/:table[/:recordId]` (up to 100
+    per page and 10 per write; supports `view`, `filterByFormula`, `sort[n][field]`,
+    `fields[]`, `offset` and `typecast`), `GET /v1/meta/bases`, and
+    `GET /v1/meta/bases/:id/tables`.
+  - Auth: personal access tokens only (`Authorization: Bearer pat…`), made under
+    **</> API → Access tokens**. They're stored as SHA-256 hashes and can be read-only
+    and limited to some bases. A token never exceeds its owner's role, and writes
+    need editor access.
+  - Limits: 10 requests a second per token (`GRIDBASE_API_PER_SECOND`). CORS is
+    open, because cookies are never accepted on `/v1`.
+  - API changes start automations and show the token's owner in record history.
+- **Webhooks** (`src/server/webhooks.ts`), managed under **</> API → Webhooks** or
+  `/v1/bases/:id/webhooks`:
+  - After each change, the server POSTs the created, updated and deleted records
+    (with field values) to each webhook, optionally only for one table.
+  - Each POST carries `X-Gridbase-Signature: sha256=HMAC(secret, "<X-Gridbase-Timestamp>.<body>")`.
+  - Delivery goes through the same public-https-only poster as automations. A
+    webhook is switched off after 20 failures in a row.
+- **Synced tables** (`src/shared/sync.ts`): **+ Add table → Sync from another base**
+  copies a grid view (its filtered records and visible fields) into a read-only table.
+  - It updates a couple of seconds after the source changes, and every 15 minutes.
+    **Sync now** forces an update.
+  - You can add your own fields to the synced table. Synced fields and records
+    can't be edited there, even through the API.
+  - Setting one up needs editor access to the source base. If the person who set
+    it up loses that access, the sync stops with a message and keeps the last copy.
+  - Computed, link, user and file fields arrive as text (counts as numbers).
+
 ## Not built yet
 
-Everything on the plan is built. Ideas for later: timeline, list and Gantt views,
-interfaces (dashboards), scheduled automations and integrations, more field types.
+Ideas for later: timeline, list and Gantt views, interfaces (dashboards), mobile app.

@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import type { Action, CellValue, Field, FieldOptions, FieldType, SelectChoice } from "@/shared/types";
-import { FIELD_TYPES, isComputed } from "@/shared/fieldTypes";
+import { FIELD_TYPES, isReadOnly } from "@/shared/fieldTypes";
 import { choiceColor, choiceNames, IMPORT_TYPES, importValue, inferColumn, parseCsv, type ImportType } from "@/shared/csv";
 import { newId } from "@/shared/ids";
 import { Dialog, useBase } from "./common";
@@ -22,7 +22,7 @@ export function ImportDialog({ tableId, onClose, onCreated }: { tableId?: string
   const state = snap.state;
   const target = tableId ? state.tables[tableId] : undefined;
   const targetFields = useMemo(
-    () => (target ? target.fieldOrder.map((id) => state.fields[id]).filter((f): f is Field => Boolean(f) && !isComputed(f.type) && f.type !== "attachment") : []),
+    () => (target ? target.fieldOrder.map((id) => state.fields[id]).filter((f): f is Field => Boolean(f) && !isReadOnly(f) && f.type !== "attachment") : []),
     [target, state.fields],
   );
 

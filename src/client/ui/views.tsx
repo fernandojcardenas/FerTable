@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { Attachment, CellValue, Field, FormConfig, Row, SelectChoice, View } from "@/shared/types";
 import { isAnswered, missingAnswers, questionHelp, questionLabel, requiredIds } from "@/shared/forms";
 import { PUBLIC_TYPES } from "@/shared/publicForm";
-import { isComputed, isImage } from "@/shared/fieldTypes";
+import { isReadOnly, isImage } from "@/shared/fieldTypes";
 import { viewRows, visibleFields } from "@/shared/query";
 import { newId } from "@/shared/ids";
 import { CellContent, ChoiceChip, FieldIcon, useBase } from "./common";
@@ -246,8 +246,8 @@ export function FormView({ view }: { view: View }) {
   const [extraChoices, setExtraChoices] = useState<Record<string, SelectChoice[]>>({});
   const [done, setDone] = useState(false);
   const [missing, setMissing] = useState<Set<string>>(new Set());
-  const allFields = table.fieldOrder.map((id) => snap.state.fields[id]).filter((f): f is Field => Boolean(f) && !isComputed(f.type));
-  const fields = form.fieldIds.map((id) => snap.state.fields[id]).filter((f): f is Field => Boolean(f) && !isComputed(f.type));
+  const allFields = table.fieldOrder.map((id) => snap.state.fields[id]).filter((f): f is Field => Boolean(f) && !isReadOnly(f));
+  const fields = form.fieldIds.map((id) => snap.state.fields[id]).filter((f): f is Field => Boolean(f) && !isReadOnly(f));
   const required = new Set(requiredIds(form, table.primaryFieldId));
   const updateForm = (patch: Partial<FormConfig>, key = Object.keys(patch).join(",")) =>
     client.dispatchWith({ coalesce: { key: `form:${view.id}:${key}`, windowMs: 1500 } }, { type: "view.update", viewId: view.id, config: { form: { ...form, ...patch } } });

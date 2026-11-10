@@ -334,3 +334,5 @@ textarea.cell-editor { height: 140px; bottom: auto; padding: 6px; resize: none; 
 .branch { border-left: 3px solid var(--line); padding-left: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
 .textarea.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .connections summary { cursor: pointer; }
+.sync-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 12px; background: var(--panel, rgba(127,127,127,.08)); border-bottom: 1px solid var(--line); }
+.sync-banner.error { background: rgba(220, 60, 60, .08); }

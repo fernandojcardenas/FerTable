@@ -103,6 +103,30 @@ create table if not exists automation_schedule (
   base_id text not null references bases(id) on delete cascade,
   last_run timestamptz not null
 );
+create table if not exists api_tokens (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  name text not null,
+  token_hash text not null unique,
+  hint text not null,
+  base_ids jsonb,
+  can_write boolean not null default false,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz
+);
+create table if not exists webhooks (
+  id text primary key,
+  base_id text not null references bases(id) on delete cascade,
+  created_by text references users(id) on delete set null,
+  url text not null,
+  table_id text,
+  secret text not null,
+  enabled boolean not null default true,
+  failures integer not null default 0,
+  last_status text,
+  last_at timestamptz,
+  created_at timestamptz not null default now()
+);
 create table if not exists email_verifications (
   token_hash text primary key,
   user_id text not null references users(id) on delete cascade,

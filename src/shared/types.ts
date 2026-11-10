@@ -68,6 +68,8 @@ export type Field = {
   type: FieldType;
   options: FieldOptions;
   description?: string;
+  /** In a synced table: the source field this one copies (read-only here). */
+  syncSourceFieldId?: string;
 };
 
 /** A file stored by the server. `url` always points at /api/files/. */
@@ -86,6 +88,8 @@ export type Row = {
   modifiedBy?: string | null;
   /** AI fields whose last run failed, with why. */
   aiErrors?: Record<string, string>;
+  /** In a synced table: the source record this row copies. */
+  sourceRowId?: string;
 };
 
 /** Base members' names, sent with a snapshot so user fields can show names. */
@@ -99,7 +103,25 @@ export type Table = {
   rowOrder: string[];
   viewOrder: string[];
   nextAutoNumber: number;
+  /** Set when this table copies a view of a table in another base. */
+  sync?: TableSync;
 };
+
+/** A read-only copy of a view in another base, kept up to date by the server. */
+export type TableSync = {
+  sourceBaseId: string;
+  sourceTableId: string;
+  sourceViewId: string;
+  /** Names to show ("Base › Table › View"); refreshed on each sync. */
+  sourceLabel: string;
+  /** The person who set it up; the sync reads the source with their access. */
+  createdBy: string;
+  lastSyncAt: string | null;
+  error: string | null;
+};
+
+/** One synced field: its id here, the source field, and how it's stored here. */
+export type SyncFieldDef = { fieldId: string; sourceFieldId: string; name: string; fieldType: FieldType; options: FieldOptions };
 
 export type FormConfig = {
   title: string;
@@ -207,7 +229,7 @@ export type BaseState = {
 // ---- Actions: every change to a base is one of these ----
 
 export type Action =
-  | { type: "table.create"; tableId: string; name: string; primaryFieldId: string; viewId: string }
+  | { type: "table.create"; tableId: string; name: string; primaryFieldId: string; viewId: string; sync?: TableSync }
   | { type: "table.rename"; tableId: string; name: string }
   | { type: "table.delete"; tableId: string }
   | { type: "field.create"; fieldId: string; tableId: string; name: string; fieldType: FieldType; options?: FieldOptions; inverseFieldId?: string; afterFieldId?: string | null }
@@ -219,6 +241,13 @@ export type Action =
   | { type: "row.delete"; rowIds: string[] }
   /** The server writes an AI field's result (clients can't send this). */
   | { type: "ai.set"; rowId: string; fieldId: string; value: string | null; error?: string }
+  /**
+   * The server copies a source view into a synced table (clients can't send this):
+   * fields to add, change or drop, rows to add or change (matched by source record), and rows to remove.
+   */
+  | { type: "sync.apply"; tableId: string; fields: SyncFieldDef[]; removeFieldIds: string[];
+      upserts: { rowId: string; sourceRowId: string; cells: Record<string, CellValue> }[]; deleteRowIds: string[];
+      sourceLabel: string; error: string | null }
   /** Move rows (keeping their relative order) to just after afterRowId, or to the top when null. */
   | { type: "row.move"; rowIds: string[]; afterRowId: string | null }
   /**
@@ -290,7 +319,7 @@ export type ActionBatch = {
   actions: Action[];
   clientId: string | null;
   requestId: string | null;
-  source: "client" | "automation";
+  source: "client" | "automation" | "sync" | "api";
 };
 
 export type ServerMessage =

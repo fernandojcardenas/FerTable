@@ -24,7 +24,7 @@ export type User = { id: string; email: string; name: string; verified: boolean 
 /** Set GRIDBASE_VERIFY_EMAIL=false to skip email confirmation (every account counts as confirmed). */
 export const verifyEmailRequired = () => process.env.GRIDBASE_VERIFY_EMAIL !== "false";
 
-const USER_COLS = "u.id, u.email, u.name, (u.email_verified_at is not null) as verified";
+export const USER_COLS = "u.id, u.email, u.name, (u.email_verified_at is not null) as verified";
 
 export class AuthError extends Error {
   constructor(public status: 401 | 403 | 404 | 409 | 422 | 429, message: string) {

@@ -17,6 +17,9 @@ import { appUrl, inviteEmail, mailMode, sendMailInBackground, sharedEmail } from
 import { addComment, commentCounts, deleteComment, editComment, getComment, listComments, notifyMentions } from "./src/server/comments";
 import { Computer } from "./src/shared/compute";
 import type { Action } from "./src/shared/types";
+import { handlePublicApi } from "./src/server/publicApi";
+import { createToken, listTokens, revokeToken } from "./src/server/apiTokens";
+import { createWebhook, deleteWebhook, enableWebhook, listWebhooks } from "./src/server/webhooks";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3210);
@@ -180,6 +183,16 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
 
     const user = await requireUser(req);
     if (parts[1] === "files" && method === "GET" && parts[2]) return await serveFile(res, parts[2], user);
+    // Personal access tokens for the public API.
+    if (parts[1] === "tokens") {
+      if (method === "GET" && !parts[2]) return send(res, 200, { tokens: await listTokens(user.id) });
+      if (method === "POST" && !parts[2]) {
+        const body = await readJson(req);
+        return send(res, 201, await createToken(user.id, body.name, body.baseIds, body.canWrite));
+      }
+      if (method === "DELETE" && parts[2]) { await revokeToken(user.id, parts[2]); return send(res, 200, { ok: true }); }
+      return send(res, 404, { error: "Not found" });
+    }
     if (parts[1] !== "bases") return send(res, 404, { error: "Not found" });
     const baseId = parts[2];
     const sub = parts[3];
@@ -300,6 +313,30 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
         await removeConnection(baseId, item);
         return send(res, 200, { ok: true });
       }
+    }
+    if (sub === "webhooks") {
+      await requireRole(user, baseId, "editor");
+      if (method === "GET" && !item) return send(res, 200, { webhooks: await listWebhooks(baseId) });
+      if (method === "POST" && !item) {
+        const body = await readJson(req);
+        const state = await engine.getState(baseId);
+        return send(res, 201, await createWebhook(baseId, state!, user.id, body.url, body.tableId));
+      }
+      if (method === "POST" && item && parts[5] === "enable") { await enableWebhook(baseId, item); return send(res, 200, { ok: true }); }
+      if (method === "DELETE" && item) { await deleteWebhook(baseId, item); return send(res, 200, { ok: true }); }
+    }
+    // Synced tables: copy a grid view from another base you can edit.
+    if (sub === "sync-sources" && method === "GET") {
+      await requireRole(user, baseId, "editor");
+      return send(res, 200, { bases: await engine.syncSources(user.id, baseId) });
+    }
+    if (sub === "syncs" && method === "POST") {
+      await requireRole(user, baseId, "editor");
+      if (!item) {
+        const body = await readJson(req);
+        return send(res, 201, { tableId: await engine.createSyncedTable(baseId, user.id, body.sourceBaseId, body.sourceViewId) });
+      }
+      if (parts[5] === "run") { await engine.runSync(baseId, item); return send(res, 200, { ok: true }); }
     }
     if (sub === "members") {
       if (method === "GET") {
@@ -426,6 +463,10 @@ const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   if (url.pathname.startsWith("/api/")) {
     void handleApi(req, res, url);
+    return;
+  }
+  if (url.pathname.startsWith("/v1/")) {
+    void handlePublicApi(req, res, url);
     return;
   }
   void (async () => {

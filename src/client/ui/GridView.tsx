@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { CellValue, Field, Row, View } from "@/shared/types";
-import { isComputed } from "@/shared/fieldTypes";
+import { isReadOnly } from "@/shared/fieldTypes";
 import { groupRows, viewRows, visibleFields, type RowGroup } from "@/shared/query";
 import { newId } from "@/shared/ids";
 import type { Attachment } from "@/shared/types";
@@ -179,7 +179,7 @@ export function GridView({ view }: { view: View }) {
   function startEdit(pos: Pos, seed?: string) {
     const field = state.fields[pos.fieldId];
     const row = state.rows[pos.rowId];
-    if (!field || !row || isComputed(field.type)) return;
+    if (!field || !row || isReadOnly(field)) return;
     if (!client.ensureCanEdit()) return; // viewers get a message instead of an editor
     if (field.type === "checkbox") return setCell(row.id, field, !row.cells[field.id]);
     // Render the editor right away so the next keystroke lands in it, not in the grid.
@@ -199,7 +199,7 @@ export function GridView({ view }: { view: View }) {
     else if (k === "Enter") { e.preventDefault(); if (e.shiftKey) openRecord(row.id); else startEdit(sel); }
     else if (k === "Escape") setSel(null);
     else if (k === " " && field.type === "checkbox") { e.preventDefault(); startEdit(sel); }
-    else if ((k === "Backspace" || k === "Delete") && !isComputed(field.type)) { e.preventDefault(); setCell(row.id, field, null); }
+    else if ((k === "Backspace" || k === "Delete") && !isReadOnly(field)) { e.preventDefault(); setCell(row.id, field, null); }
     else if (field.type === "rating" && /^[0-9]$/.test(k) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (client.ensureCanEdit()) setCell(row.id, field, k === "0" ? null : Number(k)); }
     else if (k.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && TEXTY.has(field.type)) { e.preventDefault(); startEdit(sel, k); }
   }
@@ -215,7 +215,7 @@ export function GridView({ view }: { view: View }) {
   function onPaste(e: React.ClipboardEvent) {
     if (editing || !sel) return;
     const row = state.rows[sel.rowId], field = state.fields[sel.fieldId];
-    if (!row || !field || isComputed(field.type) || field.type === "attachment") return;
+    if (!row || !field || isReadOnly(field) || field.type === "attachment") return;
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain").trim();
     if (field.type === "singleSelect" || field.type === "multiSelect") {
@@ -334,7 +334,7 @@ export function GridView({ view }: { view: View }) {
                   <button onClick={() => {
                     setMenu(null);
                     const cells: Record<string, CellValue> = {};
-                    for (const f of table.fieldOrder.map((id) => state.fields[id])) if (f && !isComputed(f.type) && row.cells[f.id] !== undefined) cells[f.id] = row.cells[f.id];
+                    for (const f of table.fieldOrder.map((id) => state.fields[id])) if (f && !isReadOnly(f) && row.cells[f.id] !== undefined) cells[f.id] = row.cells[f.id];
                     client.dispatch({ type: "row.create", rowId: newId("rec"), tableId: table.id, afterRowId: row.id, cells });
                   }}>⧉ Duplicate record</button>
                   <hr />
@@ -356,7 +356,7 @@ export function GridView({ view }: { view: View }) {
               return (
                 <div
                   key={f.id} id={`cell-${row.id}-${f.id}`} role="gridcell"
-                  className={`cell ${f.id === table.primaryFieldId ? "primary" : ""} ${isSel ? "selected" : ""} ${isComputed(f.type) ? "computed" : ""} ${isNumeric(f) ? "num" : ""} ${f.type === "checkbox" ? "checkbox-cell" : ""} ${err ? "error" : ""}`}
+                  className={`cell ${f.id === table.primaryFieldId ? "primary" : ""} ${isSel ? "selected" : ""} ${isReadOnly(f) ? "computed" : ""} ${isNumeric(f) ? "num" : ""} ${f.type === "checkbox" ? "checkbox-cell" : ""} ${err ? "error" : ""}`}
                   style={{ width: width(f), overflow: isEdit ? "visible" : undefined, zIndex: isEdit ? 6 : undefined }}
                   onMouseDown={(e) => {
                     if (isEdit) return;
@@ -386,10 +386,12 @@ export function GridView({ view }: { view: View }) {
       })}
       <div style={{ height: offsets[items.length] - offsets[end] }} aria-hidden="true" />
 
-      <div className="grid-row add-row">
-        <div className="cell rownum" onClick={() => addRow(rowIds[rowIds.length - 1])}>+</div>
-        <div className="cell primary" style={{ width: width(fields[0]) }} onClick={() => addRow(rowIds[rowIds.length - 1])}>Add record</div>
-      </div>
+      {!table.sync && (
+        <div className="grid-row add-row">
+          <div className="cell rownum" onClick={() => addRow(rowIds[rowIds.length - 1])}>+</div>
+          <div className="cell primary" style={{ width: width(fields[0]) }} onClick={() => addRow(rowIds[rowIds.length - 1])}>Add record</div>
+        </div>
+      )}
       <div className="summary-bar">{rowIds.length} record{rowIds.length === 1 ? "" : "s"}</div>
     </div>
   );

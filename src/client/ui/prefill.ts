@@ -1,5 +1,5 @@
 import type { BaseState, CellValue, View } from "@/shared/types";
-import { isComputed } from "@/shared/fieldTypes";
+import { isReadOnly } from "@/shared/fieldTypes";
 
 /**
  * Values for a new record so it still shows in a filtered view
@@ -11,7 +11,7 @@ export function prefillFromFilters(state: BaseState, view: View): Record<string,
   if (!f || f.conjunction !== "and") return out;
   for (const cond of f.conditions) {
     const field = state.fields[cond.fieldId];
-    if (!field || isComputed(field.type) || cond.value === null || cond.value === undefined || cond.value === "") continue;
+    if (!field || isReadOnly(field) || cond.value === null || cond.value === undefined || cond.value === "") continue;
     if (["is", "contains"].includes(cond.operator) && ["text", "longText", "email", "url", "phone"].includes(field.type)) out[field.id] = String(cond.value);
     else if (cond.operator === "is" && field.type === "singleSelect") out[field.id] = Array.isArray(cond.value) ? String(cond.value[0]) : String(cond.value);
     else if (cond.operator === "eq" && field.type === "number") out[field.id] = Number(cond.value);

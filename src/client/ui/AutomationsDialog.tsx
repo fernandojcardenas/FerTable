@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Automation, AutomationStep, AutomationTrigger, BaseState, ConnectionInfo, ConnectionKind, Field } from "@/shared/types";
-import { isComputed } from "@/shared/fieldTypes";
+import { isReadOnly } from "@/shared/fieldTypes";
 import { newId } from "@/shared/ids";
 import { idsToNames, namesToIds } from "@/shared/formula";
 import { Dialog, useBase } from "./common";
@@ -256,7 +256,7 @@ function TriggerSettings({ trigger, setTrigger, fields }: { trigger: AutomationT
       <div style={{ marginTop: 8 }}>
         <span className="muted small">Only when these fields change (none = any field):</span>
         <div className="row" style={{ flexWrap: "wrap", gap: 10, marginTop: 4 }}>
-          {fields.filter((f) => !isComputed(f.type)).map((f) => (
+          {fields.filter((f) => !isReadOnly(f)).map((f) => (
             <label key={f.id} className="row small">
               <input type="checkbox" checked={t.watchFieldIds.includes(f.id)}
                 onChange={(e) => setTrigger({ ...t, watchFieldIds: e.target.checked ? [...t.watchFieldIds, f.id] : t.watchFieldIds.filter((x) => x !== f.id) })} />
@@ -506,7 +506,7 @@ function ValuesEditor({ step, onChange, tableId, show, store }: {
 }) {
   const { snap } = useBase();
   const target = step.type === "createRecord" ? step.tableId : tableId;
-  const targetFields = fieldsOf(snap.state, target).filter((f) => !isComputed(f.type) && f.type !== "attachment");
+  const targetFields = fieldsOf(snap.state, target).filter((f) => !isReadOnly(f) && f.type !== "attachment");
   const unused = targetFields.filter((f) => !(f.id in step.values));
   return (
     <div className="stack" style={{ gap: 6 }}>

@@ -17,6 +17,8 @@ import { ShareDialog } from "./ShareDialog";
 import { AccountMenu, type Me } from "./AccountMenu";
 import { ImportDialog } from "./ImportDialog";
 import { DeletedDialog } from "./DeletedDialog";
+import { DeveloperDialog } from "./DeveloperDialog";
+import { SyncBanner, SyncDialog } from "./SyncDialog";
 import { downloadViewCsv } from "./csvExport";
 
 const VIEW_TYPES: { type: ViewType; label: string; icon: string }[] = [
@@ -94,6 +96,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   const [fieldDialog, setFieldDialog] = useState<Parameters<BaseUi["openFieldDialog"]>[0] | null>(null);
   const [showAutomations, setShowAutomations] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showDeveloper, setShowDeveloper] = useState(false);
   const [sidebar, setSidebar] = useState(true);
 
   // Fall back to the first table/view when the remembered one is gone.
@@ -139,13 +142,14 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   return (
     <BaseContext.Provider value={ui}>
       <div className="base-app">
-        <Header me={me} onAutomations={() => setShowAutomations(true)} onShare={() => setShowShare(true)} onToggleSidebar={() => setSidebar((s) => !s)} />
+        <Header me={me} onDeveloper={() => setShowDeveloper(true)} onAutomations={() => setShowAutomations(true)} onShare={() => setShowShare(true)} onToggleSidebar={() => setSidebar((s) => !s)} />
         <TableTabs activeId={table.id} onSelect={(id) => setSel({ tableId: id, viewId: state.tables[id]?.viewOrder[0] })} />
         <div className="workspace">
           <aside className={`sidebar ${sidebar ? "" : "collapsed"}`}>
             <ViewList tableId={table.id} activeId={view.id} onSelect={(id) => setSel({ tableId: table.id, viewId: id })} />
           </aside>
           <section className="main">
+            {table.sync && <SyncBanner table={table} />}
             <Toolbar view={view} onAddRecord={addRecord} />
             <div className="view-body">
               {view.type === "grid" && <GridView key={view.id} view={view} />}
@@ -159,6 +163,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
         {recordId && <RecordDialog rowId={recordId} onClose={() => setRecordId(null)} />}
         {fieldDialog && <FieldDialog {...fieldDialog} onClose={() => setFieldDialog(null)} />}
         {showAutomations && <AutomationsDialog onClose={() => setShowAutomations(false)} />}
+        {showDeveloper && <DeveloperDialog onClose={() => setShowDeveloper(false)} />}
         {showShare && <ShareDialog baseId={baseId} baseName={state.base.name} onClose={() => setShowShare(false)} />}
         {snap.error && <div className="toast" role="alert">{snap.error}</div>}
         {!snap.error && snap.notice && <div className="toast notice" role="status">{snap.notice}</div>}
@@ -169,7 +174,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
 
 const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
-function Header({ me, onAutomations, onShare, onToggleSidebar }: { me: Me; onAutomations: () => void; onShare: () => void; onToggleSidebar: () => void }) {
+function Header({ me, onDeveloper, onAutomations, onShare, onToggleSidebar }: { me: Me; onDeveloper: () => void; onAutomations: () => void; onShare: () => void; onToggleSidebar: () => void }) {
   const { snap, client } = useBase();
   const [name, setName] = useState(snap.state.base.name);
   useEffect(() => setName(snap.state.base.name), [snap.state.base.name]);
@@ -196,6 +201,7 @@ function Header({ me, onAutomations, onShare, onToggleSidebar }: { me: Me; onAut
         title={snap.undoLabel ? `Undo ${snap.undoLabel} (${MOD}Z)` : "Nothing to undo"}>↶</button>
       <button className="btn ghost" onClick={() => client.redo()} disabled={!snap.redoLabel} aria-label="Redo"
         title={snap.redoLabel ? `Redo ${snap.redoLabel} (${MOD}⇧Z)` : "Nothing to redo"}>↷</button>
+      <button className="btn ghost" onClick={onDeveloper} title="Developer API, access tokens and webhooks">{"</>"} API</button>
       <button className="btn" onClick={onAutomations}>⚡ Automations</button>
       <button className="btn primary" onClick={onShare}>Share</button>
       <AccountMenu me={me} />
@@ -209,6 +215,12 @@ function TableTabs({ activeId, onSelect }: { activeId: string; onSelect: (id: st
   const [deletedFor, setDeletedFor] = useState<string | null>(null);
   // Import as a new table (tableId undefined) or into an existing one.
   const [importing, setImporting] = useState<{ tableId?: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  // A synced table is made on the server; switch to it once it arrives.
+  const [pendingTable, setPendingTable] = useState<string | null>(null);
+  useEffect(() => {
+    if (pendingTable && snap.state.tables[pendingTable]) { onSelect(pendingTable); setPendingTable(null); }
+  }, [pendingTable, snap.state.tables, onSelect]);
   const state = snap.state;
 
   const addTable = () => {
@@ -247,9 +259,11 @@ function TableTabs({ activeId, onSelect }: { activeId: string; onSelect: (id: st
         <div className="menu">
           <button onClick={() => { setMenu(null); addTable(); }}>▦ Blank table</button>
           <button onClick={() => { setMenu(null); if (client.ensureCanEdit()) setImporting({}); }}>⤒ Import a CSV file…</button>
+          <button onClick={() => { setMenu(null); if (client.ensureCanEdit()) setSyncing(true); }}>⇄ Sync from another base…</button>
         </div>
       </Popover>
       {deletedFor && <DeletedDialog tableId={deletedFor} onClose={() => setDeletedFor(null)} onOpen={(rowId) => { setDeletedFor(null); openRecord(rowId); }} />}
+      {syncing && <SyncDialog onClose={() => setSyncing(false)} onCreated={(id) => setPendingTable(id)} />}
       {importing && <ImportDialog tableId={importing.tableId} onClose={() => setImporting(null)} onCreated={(id) => onSelect(id)} />}
     </nav>
   );

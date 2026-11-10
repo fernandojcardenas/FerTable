@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { isComputed } from "@/shared/fieldTypes";
+import { isReadOnly } from "@/shared/fieldTypes";
 import { formatDate } from "@/shared/compute";
 import { CellContent, Dialog, FieldIcon, useBase } from "./common";
 import { FieldInput } from "./inputs";
@@ -56,7 +56,7 @@ export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () =>
             <div key={f.id} className="record-field">
               <div className="name"><FieldIcon field={f} /> {f.name}</div>
               <div style={{ minWidth: 0 }}>
-                {isComputed(f.type) || !canEdit ? (
+                {isReadOnly(f) || !canEdit ? (
                   <div style={{ padding: "6px 0", whiteSpace: "pre-wrap" }}>
                     <CellContent row={row} field={f} detailed />
                     {f.type === "ai" && <div style={{ marginTop: 4 }}><RegenerateButton field={f} rowIds={[row.id]} /></div>}
