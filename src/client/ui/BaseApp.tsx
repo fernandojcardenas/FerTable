@@ -19,6 +19,7 @@ import { ImportDialog } from "./ImportDialog";
 import { DeletedDialog } from "./DeletedDialog";
 import { DeveloperDialog } from "./DeveloperDialog";
 import { SyncBanner, SyncDialog } from "./SyncDialog";
+import { InterfacesView } from "./InterfacesView";
 import { downloadViewCsv } from "./csvExport";
 
 const VIEW_TYPES: { type: ViewType; label: string; icon: string }[] = [
@@ -97,6 +98,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   const [showAutomations, setShowAutomations] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showDeveloper, setShowDeveloper] = useState(false);
+  const [mode, setMode] = useState<"data" | "interfaces">("data");
   const [sidebar, setSidebar] = useState(true);
 
   // Fall back to the first table/view when the remembered one is gone.
@@ -142,7 +144,11 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   return (
     <BaseContext.Provider value={ui}>
       <div className="base-app">
-        <Header me={me} onDeveloper={() => setShowDeveloper(true)} onAutomations={() => setShowAutomations(true)} onShare={() => setShowShare(true)} onToggleSidebar={() => setSidebar((s) => !s)} />
+        <Header me={me} mode={mode} setMode={setMode} onDeveloper={() => setShowDeveloper(true)} onAutomations={() => setShowAutomations(true)} onShare={() => setShowShare(true)} onToggleSidebar={() => setSidebar((s) => !s)} />
+        {mode === "interfaces" ? (
+          <InterfacesView onOpenView={(vid) => { const v = state.views[vid]; if (v) { setSel({ tableId: v.tableId, viewId: vid }); setMode("data"); } }} />
+        ) : (
+          <>
         <TableTabs activeId={table.id} onSelect={(id) => setSel({ tableId: id, viewId: state.tables[id]?.viewOrder[0] })} />
         <div className="workspace">
           <aside className={`sidebar ${sidebar ? "" : "collapsed"}`}>
@@ -160,6 +166,8 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
             </div>
           </section>
         </div>
+          </>
+        )}
         {recordId && <RecordDialog rowId={recordId} onClose={() => setRecordId(null)} />}
         {fieldDialog && <FieldDialog {...fieldDialog} onClose={() => setFieldDialog(null)} />}
         {showAutomations && <AutomationsDialog onClose={() => setShowAutomations(false)} />}
@@ -174,7 +182,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
 
 const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
-function Header({ me, onDeveloper, onAutomations, onShare, onToggleSidebar }: { me: Me; onDeveloper: () => void; onAutomations: () => void; onShare: () => void; onToggleSidebar: () => void }) {
+function Header({ me, mode, setMode, onDeveloper, onAutomations, onShare, onToggleSidebar }: { me: Me; mode: "data" | "interfaces"; setMode: (m: "data" | "interfaces") => void; onDeveloper: () => void; onAutomations: () => void; onShare: () => void; onToggleSidebar: () => void }) {
   const { snap, client } = useBase();
   const [name, setName] = useState(snap.state.base.name);
   useEffect(() => setName(snap.state.base.name), [snap.state.base.name]);
@@ -193,6 +201,10 @@ function Header({ me, onDeveloper, onAutomations, onShare, onToggleSidebar }: { 
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
       <span className="row small muted" title={`Transaction ${snap.state.base.txn}`}>
         <span className={`status-dot ${snap.status}`} /> {statusText}
+      </span>
+      <span className="mode-switch" role="tablist" aria-label="Section">
+        <button role="tab" aria-selected={mode === "data"} className={mode === "data" ? "on" : ""} onClick={() => setMode("data")}>Data</button>
+        <button role="tab" aria-selected={mode === "interfaces"} className={mode === "interfaces" ? "on" : ""} onClick={() => setMode("interfaces")}>Interfaces</button>
       </span>
       {snap.role === "viewer" && <span className="role-badge" title="You can look but not change anything">View only</span>}
       {snap.role === "commenter" && <span className="role-badge" title="You can read and comment, but not change records">Can comment</span>}

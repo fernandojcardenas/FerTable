@@ -103,6 +103,7 @@ create table if not exists automation_schedule (
   base_id text not null references bases(id) on delete cascade,
   last_run timestamptz not null
 );
+create table if not exists pages (id text primary key, base_id text not null references bases(id) on delete cascade, data jsonb not null);
 create table if not exists api_tokens (
   id text primary key,
   user_id text not null references users(id) on delete cascade,

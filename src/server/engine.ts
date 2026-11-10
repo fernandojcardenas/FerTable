@@ -38,6 +38,7 @@ const COLLECTIONS = [
   ["rows", "rows_"],
   ["views", "views"],
   ["automations", "automations"],
+  ["pages", "pages"],
 ] as const;
 
 const MAX_BACKFILL = 2000;

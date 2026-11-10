@@ -3,7 +3,7 @@
 
 const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-export type IdPrefix = "bas" | "tbl" | "fld" | "viw" | "rec" | "opt" | "flt" | "aut" | "req" | "cli" | "att" | "usr" | "com" | "cnx" | "srt" | "pat" | "ach";
+export type IdPrefix = "bas" | "tbl" | "fld" | "viw" | "rec" | "opt" | "flt" | "aut" | "req" | "cli" | "att" | "usr" | "com" | "cnx" | "srt" | "pat" | "ach" | "pag" | "elm";
 
 export function newId(prefix: IdPrefix): string {
   const bytes = new Uint8Array(14);

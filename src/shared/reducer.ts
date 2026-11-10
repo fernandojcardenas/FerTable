@@ -3,7 +3,7 @@
 // It must be deterministic: anything time-based comes from the action itself.
 
 import type {
-  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, RestorePatch, Row, Table, TableSync, View, ViewConfig, ViewType,
+  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, InterfacePage, PageElement, RestorePatch, Row, Table, TableSync, View, ViewConfig, ViewType,
 } from "./types";
 import { applyOrderPatch } from "./history";
 import { choicesFromText, coerceValue, defaultOptions, isComputed } from "./fieldTypes";
@@ -24,10 +24,10 @@ export function defaultViewConfig(): ViewConfig {
 }
 
 export function emptyBase(id: string, name: string): BaseState {
-  return { base: { id, name, txn: 0 }, tableOrder: [], tables: {}, fields: {}, rows: {}, views: {}, automations: {} };
+  return { base: { id, name, txn: 0 }, tableOrder: [], tables: {}, fields: {}, rows: {}, views: {}, automations: {}, pages: {} };
 }
 
-type MapKey = "tables" | "fields" | "rows" | "views" | "automations";
+type MapKey = "tables" | "fields" | "rows" | "views" | "automations" | "pages";
 
 /** Copy-on-write helper so unchanged objects keep their identity (used to find what to save). */
 class Draft {
@@ -43,7 +43,7 @@ class Draft {
   constructor(private src: BaseState) {
     this.base = src.base;
     this.tableOrder = src.tableOrder;
-    this.maps = { tables: src.tables, fields: src.fields, rows: src.rows, views: src.views, automations: src.automations };
+    this.maps = { tables: src.tables, fields: src.fields, rows: src.rows, views: src.views, automations: src.automations, pages: src.pages ?? {} };
   }
 
   private map<K extends MapKey>(k: K): BaseState[K] {
@@ -59,6 +59,7 @@ class Draft {
   get rows() { return this.maps.rows; }
   get views() { return this.maps.views; }
   get automations() { return this.maps.automations; }
+  get pages() { return this.maps.pages; }
 
   table(id: string): Table {
     const t = this.tables[id] ?? fail(`Table ${id} not found`);
@@ -86,11 +87,11 @@ class Draft {
     this.copied.add(id);
     return (this.map("views")[id] = structuredClone(v));
   }
-  put<K extends "tables" | "fields" | "rows" | "views" | "automations">(k: K, obj: BaseState[K][string]) {
+  put<K extends MapKey>(k: K, obj: BaseState[K][string]) {
     this.copied.add(obj.id);
     (this.map(k) as Record<string, unknown>)[obj.id] = obj;
   }
-  remove(k: "tables" | "fields" | "rows" | "views" | "automations", id: string) {
+  remove(k: MapKey, id: string) {
     delete (this.map(k) as Record<string, unknown>)[id];
   }
   snapshot(): BaseState {
@@ -290,6 +291,78 @@ function checkSteps(d: Draft, steps: AutomationStep[], tableId: string | null, d
         fail("Unknown automation step");
     }
   }
+}
+
+export const MAX_PAGE_ELEMENTS = 40;
+const AGGREGATES = new Set(["count", "sum", "avg", "min", "max"]);
+
+/**
+ * Check a page and its elements. References to things that no longer exist are
+ * dropped (`lenient`, used by undo) or refused.
+ */
+function checkPage(d: Draft, input: InterfacePage, lenient = false): InterfacePage {
+  if (!input || !isId(input.id, "pag")) fail("Invalid page id");
+  const name = cleanName(input.name, "Page");
+  if (!Array.isArray(input.elements) || input.elements.length > MAX_PAGE_ELEMENTS) fail(`A page can have up to ${MAX_PAGE_ELEMENTS} elements`);
+  const ids = new Set<string>();
+  const elements: PageElement[] = [];
+  const bad = (msg: string): null => { if (lenient) return null; return fail(msg); };
+  for (const raw of input.elements) {
+    const e = structuredClone(raw) as PageElement;
+    if (!isId(e?.id, "elm") || ids.has(e.id)) fail("Each element needs a unique id");
+    ids.add(e.id);
+    for (const [k, min, max] of [["x", 0, 11], ["y", 0, 500], ["w", 1, 12], ["h", 1, 40]] as const) {
+      if (!Number.isInteger(e[k]) || e[k] < min || e[k] > max) fail("An element's position isn't valid");
+    }
+    if (e.x + e.w > 12) fail("An element doesn't fit on the page");
+    e.title = typeof e.title === "string" ? e.title.slice(0, 200) : "";
+    const fieldIn = (id: string | null, tableId: string) => id === null || d.fields[id]?.tableId === tableId;
+    if ("source" in e) {
+      const t = d.tables[e.source?.tableId];
+      if (!t) { if (bad("An element points to a missing table") === null) continue; }
+      if (e.source.viewId !== null && d.views[e.source.viewId]?.tableId !== e.source.tableId) {
+        if (lenient) e.source.viewId = null; else fail("An element points to a view that isn't in its table");
+      }
+    }
+    switch (e.kind) {
+      case "number":
+      case "chart":
+        if (!AGGREGATES.has(e.fn)) fail("Pick how to sum up the values");
+        if (e.fn !== "count" && !e.fieldId) fail("Pick a field to sum up");
+        if (!fieldIn(e.fieldId, e.source.tableId)) { if (bad("An element uses a missing field") === null) continue; }
+        if (e.kind === "chart") {
+          if (!["bar", "line", "pie"].includes(e.chartType)) fail("Unknown chart type");
+          if (!fieldIn(e.groupFieldId, e.source.tableId) || !e.groupFieldId) { if (bad("Pick a field to group the chart by") === null) continue; }
+        }
+        break;
+      case "list":
+        if (!Array.isArray(e.fieldIds) || e.fieldIds.length > 20) fail("A list shows up to 20 fields");
+        e.fieldIds = e.fieldIds.filter((id) => fieldIn(id, e.source.tableId));
+        if (!Number.isInteger(e.limit) || e.limit < 1 || e.limit > 500) e.limit = 50;
+        break;
+      case "map":
+        if (!e.locationFieldId || !fieldIn(e.locationFieldId, e.source.tableId) || !fieldIn(e.lngFieldId, e.source.tableId) || !fieldIn(e.labelFieldId, e.source.tableId)) {
+          if (bad("Pick the map's location fields") === null) continue;
+        }
+        break;
+      case "text":
+        if (typeof e.text !== "string" || e.text.length > 20_000) fail("The text is too long");
+        break;
+      case "button": {
+        e.label = typeof e.label === "string" && e.label.trim() ? e.label.slice(0, 80) : "Button";
+        const act = e.action;
+        if (act?.type === "url") { if (!/^(https?:\/\/|mailto:|tel:)/i.test(act.url ?? "") || act.url.length > 2000) fail("A button link must start with https://, http://, mailto: or tel:"); }
+        else if (act?.type === "automation") { if (!d.automations[act.automationId]) { if (bad("The button's automation doesn't exist") === null) continue; } }
+        else if (act?.type === "view") { if (!d.views[act.viewId]) { if (bad("The button's view doesn't exist") === null) continue; } }
+        else fail("Pick what the button does");
+        break;
+      }
+      default:
+        fail("Unknown element type");
+    }
+    elements.push(e);
+  }
+  return { id: input.id, name, elements };
 }
 
 /** {fldId} placeholders must point at fields in this table. */
@@ -899,6 +972,13 @@ function apply(d: Draft, a: Action, at: string): void {
       if (!d.automations[a.automationId]) fail("Automation not found");
       d.remove("automations", a.automationId);
       return;
+    case "page.upsert":
+      d.put("pages", checkPage(d, a.page));
+      return;
+    case "page.delete":
+      if (!d.pages[a.pageId]) fail("Page not found");
+      d.remove("pages", a.pageId);
+      return;
 
     case "restore":
       applyRestore(d, a.patch);
@@ -917,7 +997,7 @@ function apply(d: Draft, a: Action, at: string): void {
  */
 function applyRestore(d: Draft, p: RestorePatch) {
   if (!p || typeof p !== "object") fail("Invalid restore patch");
-  const ok = (id: string, prefix: "tbl" | "fld" | "viw" | "rec" | "aut") => isId(id, prefix);
+  const ok = (id: string, prefix: "tbl" | "fld" | "viw" | "rec" | "aut" | "pag") => isId(id, prefix);
 
   // 1. Tables that need to come back.
   for (const [id, tp] of Object.entries(p.tables ?? {})) {
@@ -930,6 +1010,7 @@ function applyRestore(d: Draft, p: RestorePatch) {
   }
   for (const [id, v] of Object.entries(p.views ?? {})) if (v === null && d.views[id]) d.remove("views", id);
   for (const [id, au] of Object.entries(p.automations ?? {})) if (au === null && d.automations[id]) d.remove("automations", id);
+  for (const [id, pg] of Object.entries(p.pages ?? {})) if (pg === null && d.pages[id]) d.remove("pages", id);
   for (const [id, rp] of Object.entries(p.rows ?? {})) {
     if (rp.kind !== "delete" || !d.rows[id]) continue;
     const t = d.tables[d.rows[id].tableId];
@@ -945,6 +1026,9 @@ function applyRestore(d: Draft, p: RestorePatch) {
   }
   for (const [id, au] of Object.entries(p.automations ?? {})) {
     if (au && ok(id, "aut") && au.id === id) d.put("automations", structuredClone(au));
+  }
+  for (const [id, pg] of Object.entries(p.pages ?? {})) {
+    if (pg && ok(id, "pag") && pg.id === id) d.put("pages", checkPage(d, structuredClone(pg), true));
   }
   // 4. Rows: whole rows that were deleted, or just the cells that changed.
   for (const [id, rp] of Object.entries(p.rows ?? {})) {

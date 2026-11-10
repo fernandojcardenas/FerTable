@@ -111,6 +111,8 @@ export function inversePatch(before: BaseState, after: BaseState): RestorePatch 
   if (views) patch.views = views;
   const automations = entityPatch(before.automations, after.automations);
   if (automations) patch.automations = automations;
+  const pages = entityPatch(before.pages ?? {}, after.pages ?? {});
+  if (pages) patch.pages = pages;
 
   if (before.rows !== after.rows) {
     const rows: Record<string, RowPatch> = {};

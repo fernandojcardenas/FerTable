@@ -222,9 +222,27 @@ export type BaseState = {
   rows: Record<string, Row>;
   views: Record<string, View>;
   automations: Record<string, Automation>;
+  /** Interface pages (dashboards). */
+  pages: Record<string, InterfacePage>;
   /** Members' names (not saved with the base; filled in by the server). */
   people?: People;
 };
+
+// ---- Interfaces: dashboard pages built from elements on a 12-column grid ----
+
+export type Aggregate = "count" | "sum" | "avg" | "min" | "max";
+/** Where an element's records come from: a table, optionally narrowed by one of its views. */
+export type ElementSource = { tableId: string; viewId: string | null };
+type Box = { id: string; x: number; y: number; w: number; h: number; title: string };
+export type PageElement = Box & (
+  | { kind: "number"; source: ElementSource; fn: Aggregate; fieldId: string | null }
+  | { kind: "chart"; source: ElementSource; chartType: "bar" | "line" | "pie"; groupFieldId: string; fn: Aggregate; fieldId: string | null }
+  | { kind: "list"; source: ElementSource; fieldIds: string[]; limit: number }
+  | { kind: "map"; source: ElementSource; locationFieldId: string; lngFieldId: string | null; labelFieldId: string | null }
+  | { kind: "text"; text: string }
+  | { kind: "button"; label: string; action: { type: "url"; url: string } | { type: "automation"; automationId: string } | { type: "view"; viewId: string } }
+);
+export type InterfacePage = { id: string; name: string; elements: PageElement[] };
 
 // ---- Actions: every change to a base is one of these ----
 
@@ -262,6 +280,8 @@ export type Action =
   | { type: "base.rename"; name: string }
   | { type: "automation.upsert"; automation: Automation }
   | { type: "automation.delete"; automationId: string }
+  | { type: "page.upsert"; page: InterfacePage }
+  | { type: "page.delete"; pageId: string }
   // Puts things back the way they were. Used by undo and redo.
   | { type: "restore"; patch: RestorePatch };
 
@@ -291,6 +311,7 @@ export type RestorePatch = {
   fields?: Record<string, Field | null>;
   views?: Record<string, View | null>;
   automations?: Record<string, Automation | null>;
+  pages?: Record<string, InterfacePage | null>;
   rows?: Record<string, RowPatch>;
 };
 

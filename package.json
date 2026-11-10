@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "1.8.0",
     "@electric-sql/pglite": "0.5.11",
+    "leaflet": "1.9.4",
     "next": "16.4.3",
     "nodemailer": "10.2.1",
     "pg": "8.23.1",
@@ -26,6 +27,7 @@
     "ws": "8.22.0"
   },
   "devDependencies": {
+    "@types/leaflet": "1.9.20",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "@types/react": "19.3.0",

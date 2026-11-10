@@ -247,6 +247,25 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     it up loses that access, the sync stops with a message and keeps the last copy.
   - Computed, link, user and file fields arrive as text (counts as numbers).
 
+- **Interfaces** (the **Data / Interfaces** switch in the header): dashboard pages
+  that everyone in the base can view and editors can design.
+  - Elements: **Number** (count, sum, average, min or max), **Chart** (bar, line or
+    pie, grouped by any field), **Record list**, **Map**, **Text** and **Button**
+    (open a link, open a view, or run an automation that needs no record).
+  - Each data element reads a table, optionally narrowed by one of its views.
+    Clicking a chart group lists its records, and records open in the usual dialog.
+  - **Edit page** shows a 12-column grid: drag an element's top bar to move it and
+    its corner to resize it. A side panel sets it up.
+  - Pages are stored as `page.upsert` / `page.delete` actions (`src/shared/types.ts`,
+    `pages` table), so they sync live and undo like everything else. Data comes from
+    `src/shared/interfaces.ts` and charts are plain SVG (`src/client/ui/charts.tsx`).
+    Every chart has a table view.
+  - Maps use Leaflet with OpenStreetMap tiles loaded in the viewer's browser. Point
+    them elsewhere with `NEXT_PUBLIC_GRIDBASE_MAP_TILES` and
+    `NEXT_PUBLIC_GRIDBASE_MAP_ATTRIBUTION`. A location is a text field like
+    "40.7, -74.0", or separate latitude and longitude number fields.
+  - On narrow screens, elements stack in one column.
+
 ## Not built yet
 
-Ideas for later: timeline, list and Gantt views, interfaces (dashboards), mobile app.
+Ideas for later: timeline, list and Gantt views; native iOS app.
