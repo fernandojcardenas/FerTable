@@ -70,7 +70,7 @@ export default function SharedInterfacePage({ params }: { params: Promise<{ toke
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [token]);
 
-  if (error) return <main className="home"><h1>gridbase</h1><p>{error}</p></main>;
+  if (error) return <main className="home"><h1>FerTable</h1><p>{error}</p></main>;
   if (!data) return <main className="home"><p className="muted">Loading…</p></main>;
   const records = (data.records ?? []).map((r, i) => ({ ...r, i })).filter((r) => r.name.toLowerCase().includes(q.trim().toLowerCase()));
   const rec = data.records?.[picked];
@@ -108,7 +108,7 @@ export default function SharedInterfacePage({ params }: { params: Promise<{ toke
           </div>
         </div>
       )}
-      <footer className="shared-foot muted small">Read-only page published from gridbase</footer>
+      <footer className="shared-foot muted small">Read-only page published from FerTable</footer>
     </div>
   );
 }

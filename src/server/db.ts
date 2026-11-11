@@ -285,7 +285,7 @@ async function openPglite(dir: string): Promise<Db> {
 
 /** Folder holding the embedded database (also where the admin token file lives). */
 export function dataDir(): string {
-  return process.env.GRIDBASE_DATA_DIR || join(process.cwd(), ".data", "pglite");
+  return process.env.FERTABLE_DATA_DIR || join(process.cwd(), ".data", "pglite");
 }
 
 let dbPromise: Promise<Db> | null = null;

@@ -3,8 +3,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-/** Model for AI fields. Override with GRIDBASE_AI_MODEL. */
-export const AI_MODEL = process.env.GRIDBASE_AI_MODEL ?? "";
+/** Model for AI fields. Override with FERTABLE_AI_MODEL. */
+export const AI_MODEL = process.env.FERTABLE_AI_MODEL ?? "";
 
 const SYSTEM = [
   "You fill in one cell of a spreadsheet-style database.",
@@ -24,7 +24,7 @@ function getClient(): Anthropic {
 export async function generateCell(prompt: string): Promise<AiResult> {
   if (!prompt.trim()) return { error: "This AI field has no prompt yet" };
   // For tests and demos without an API key: answers without calling the API.
-  if (process.env.GRIDBASE_AI_FAKE === "1") return { text: `AI: ${prompt.trim().slice(0, 200)}` };
+  if (process.env.FERTABLE_AI_FAKE === "1") return { text: `AI: ${prompt.trim().slice(0, 200)}` };
   try {
     const response = await getClient().beta.messages.create({
       model: AI_MODEL,

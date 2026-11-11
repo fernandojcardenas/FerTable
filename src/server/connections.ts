@@ -110,7 +110,7 @@ export function safePost(url: string, body: unknown, timeoutMs = 10_000, extraHe
   return new Promise((resolve, reject) => {
     const req = request(u, {
       method: "POST",
-      headers: { "content-type": "application/json", "content-length": data.length, "user-agent": "gridbase-automation", ...extraHeaders },
+      headers: { "content-type": "application/json", "content-length": data.length, "user-agent": "fertable-automation", ...extraHeaders },
       timeout: timeoutMs,
       lookup: safeLookup,
     }, (res) => {
@@ -137,7 +137,7 @@ export async function safeGet(url: string, maxBytes = 5_000_000, timeoutMs = 20_
   const res = await new Promise<{ status: number; text: string; type: string; location?: string }>((resolve, reject) => {
     const req = request(u, {
       method: "GET",
-      headers: { "user-agent": "gridbase-sync", accept: "text/csv, text/plain, */*" },
+      headers: { "user-agent": "fertable-sync", accept: "text/csv, text/plain, */*" },
       timeout: timeoutMs,
       lookup: safeLookup,
     }, (r) => {

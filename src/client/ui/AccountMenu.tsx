@@ -40,11 +40,11 @@ export function AccountMenu({ me }: { me: Me }) {
       {/* Outside the popover, which unmounts its content when it closes. */}
       {changing && <ChangePasswordDialog onClose={() => setChanging(false)} />}
       {iosHelp && (
-        <Dialog title="Install gridbase" onClose={() => setIosHelp(false)} footer={<button className="btn primary" onClick={() => setIosHelp(false)}>Got it</button>}>
+        <Dialog title="Install FerTable" onClose={() => setIosHelp(false)} footer={<button className="btn primary" onClick={() => setIosHelp(false)}>Got it</button>}>
           <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
             <li>Tap the <strong>Share</strong> button (the square with an arrow) in Safari.</li>
             <li>Choose <strong>Add to Home Screen</strong>.</li>
-            <li>Tap <strong>Add</strong>. gridbase opens full screen from its icon.</li>
+            <li>Tap <strong>Add</strong>. FerTable opens full screen from its icon.</li>
           </ol>
         </Dialog>
       )}

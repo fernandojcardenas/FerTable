@@ -1,4 +1,4 @@
-# gridbase
+# FerTable
 
 An original spreadsheet-database app: tables with typed fields, linked records,
 lookups, rollups, formulas, seven kinds of views, interfaces, automations, and live sync
@@ -19,7 +19,7 @@ No database setup is needed. By default it uses an embedded Postgres (PGlite)
 stored in `.data/`. To use a real Postgres server instead:
 
 ```bash
-DATABASE_URL=postgres://user:pass@localhost:5432/gridbase npm run dev
+DATABASE_URL=postgres://user:pass@localhost:5432/fertable npm run dev
 ```
 
 Other scripts: `npm test` (engine tests), `npm run typecheck`, `npm run build`,
@@ -58,7 +58,7 @@ address stay locked, so nobody can sign up with someone else's email to get thei
 invitations. Using a password-reset link confirms the address too. The first account
 on a server, and accounts made before this feature, count as confirmed. An unconfirmed
 account can still create and use its own bases; the home page shows a banner with
-*Send it again*. Set `GRIDBASE_VERIFY_EMAIL=false` to turn confirmation off. Role changes and removals reach
+*Send it again*. Set `FERTABLE_VERIFY_EMAIL=false` to turn confirmation off. Role changes and removals reach
 open windows immediately.
 
 How it's secured: passwords are hashed with scrypt; sessions are random tokens in
@@ -71,16 +71,16 @@ Settings (environment variables):
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | – | Use this Postgres server instead of the embedded one |
-| `GRIDBASE_DATA_DIR` | `.data/pglite` | Folder for the embedded database |
-| `GRIDBASE_FORM_LIMIT_PER_VISITOR`, `GRIDBASE_FORM_LIMIT_PER_FORM` | `10`, `300` | Public form responses allowed per 15 minutes |
-| `GRIDBASE_VERIFY_EMAIL` | `true` | Set `false` to skip email confirmation for new accounts |
-| `GRIDBASE_ALLOW_SIGNUP` | `true` | Set `false` to stop new sign-ups (sharing invites then can't be claimed) |
-| `GRIDBASE_SECURE_COOKIES` | `true` in production | Set `false` only to test a production build over plain HTTP |
+| `FERTABLE_DATA_DIR` | `.data/pglite` | Folder for the embedded database |
+| `FERTABLE_FORM_LIMIT_PER_VISITOR`, `FERTABLE_FORM_LIMIT_PER_FORM` | `10`, `300` | Public form responses allowed per 15 minutes |
+| `FERTABLE_VERIFY_EMAIL` | `true` | Set `false` to skip email confirmation for new accounts |
+| `FERTABLE_ALLOW_SIGNUP` | `true` | Set `false` to stop new sign-ups (sharing invites then can't be claimed) |
+| `FERTABLE_SECURE_COOKIES` | `true` in production | Set `false` only to test a production build over plain HTTP |
 | `PORT`, `HOST` | `3210`, `localhost` | Where the server listens |
 | `APP_URL` | `http://HOST:PORT` | Public address used in email links |
 | `SMTP_URL` | – | e.g. `smtps://user:pass@smtp.example.com:465`; unset = emails go to the log |
-| `GRIDBASE_AUTOMATION_EMAILS_PER_HOUR` | `100` | Most automation emails one base may send per hour |
-| `MAIL_FROM` | `gridbase <no-reply@localhost>` | Sender address |
+| `FERTABLE_AUTOMATION_EMAILS_PER_HOUR` | `100` | Most automation emails one base may send per hour |
+| `MAIL_FROM` | `FerTable <no-reply@localhost>` | Sender address |
 
 ## How it works
 
@@ -124,11 +124,11 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
 - **Button fields** open a link built from the record (`https://…?q={Name}`, values are
   URL-encoded; only `https:`, `mailto:` and `tel:` links) or run an automation on the record.
 - **AI fields** fill each record from a prompt such as `Summarize {Notes}` using an AI model
-  (`the model set in the settings`, change with `GRIDBASE_AI_MODEL`). The server needs `ANTHROPIC_API_KEY`
+  (`the model set in the settings`, change with `FERTABLE_AI_MODEL`). The server needs `ANTHROPIC_API_KEY`
   (or an `ant auth login` profile). Answers refresh when the fields the prompt uses change;
   *Regenerate* refills one record or all. Limits: 2 at a time and 500 per base per hour
-  (`GRIDBASE_AI_CONCURRENCY`, `GRIDBASE_AI_PER_HOUR`). Problems (no key, refusals) show on
-  the cell and the last good answer is kept. `GRIDBASE_AI_FAKE=1` answers without calling the
+  (`FERTABLE_AI_CONCURRENCY`, `FERTABLE_AI_PER_HOUR`). Problems (no key, refusals) show on
+  the cell and the last good answer is kept. `FERTABLE_AI_FAKE=1` answers without calling the
   API, for testing.
 - **Last modified time/by** are kept for every record; changes by automations, forms and AI
   show as "Automation".
@@ -210,8 +210,8 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     `JSON.parse(e.postData.contents).values` as a row.
   - The **Test** panel shows what each step would do for a record you pick.
     **Run now** runs it once for real.
-  - Limits per base per hour: 100 emails (`GRIDBASE_AUTOMATION_EMAILS_PER_HOUR`) and
-    300 posts (`GRIDBASE_AUTOMATION_POSTS_PER_HOUR`). Each email goes to at most 10
+  - Limits per base per hour: 100 emails (`FERTABLE_AUTOMATION_EMAILS_PER_HOUR`) and
+    300 posts (`FERTABLE_AUTOMATION_POSTS_PER_HOUR`). Each email goes to at most 10
     addresses. The server checks schedules every minute (`automation_schedule`
     keeps the last run). A new schedule waits for its first due time.
 
@@ -227,14 +227,14 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     **</> API → Access tokens**. They're stored as SHA-256 hashes and can be read-only
     and limited to some bases. A token never exceeds its owner's role, and writes
     need editor access.
-  - Limits: 10 requests a second per token (`GRIDBASE_API_PER_SECOND`). CORS is
+  - Limits: 10 requests a second per token (`FERTABLE_API_PER_SECOND`). CORS is
     open, because cookies are never accepted on `/v1`.
   - API changes start automations and show the token's owner in record history.
 - **Webhooks** (`src/server/webhooks.ts`), managed under **</> API → Webhooks** or
   `/v1/bases/:id/webhooks`:
   - After each change, the server POSTs the created, updated and deleted records
     (with field values) to each webhook, optionally only for one table.
-  - Each POST carries `X-Gridbase-Signature: sha256=HMAC(secret, "<X-Gridbase-Timestamp>.<body>")`.
+  - Each POST carries `X-FerTable-Signature: sha256=HMAC(secret, "<X-FerTable-Timestamp>.<body>")`.
   - Delivery goes through the same public-https-only poster as automations. A
     webhook is switched off after 20 failures in a row.
 - **Synced tables** (`src/shared/sync.ts`): **+ Add table → Sync from another base**
@@ -261,12 +261,12 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
     `src/shared/interfaces.ts` and charts are plain SVG (`src/client/ui/charts.tsx`).
     Every chart has a table view.
   - Maps use Leaflet with OpenStreetMap tiles loaded in the viewer's browser. Point
-    them elsewhere with `NEXT_PUBLIC_GRIDBASE_MAP_TILES` and
-    `NEXT_PUBLIC_GRIDBASE_MAP_ATTRIBUTION`. A location is a text field like
+    them elsewhere with `NEXT_PUBLIC_FERTABLE_MAP_TILES` and
+    `NEXT_PUBLIC_FERTABLE_MAP_ATTRIBUTION`. A location is a text field like
     "40.7, -74.0", or separate latitude and longitude number fields.
   - On narrow screens, elements stack in one column.
 
-- **Installable app (PWA):** gridbase installs to a phone's home screen or a
+- **Installable app (PWA):** FerTable installs to a phone's home screen or a
   computer's dock and opens full screen.
   - Files: the manifest (`src/app/manifest.ts`), icons (`public/icons`, redrawn by
     `node scripts/make-icons.mjs`), and a service worker (`public/sw.js`).
@@ -381,11 +381,11 @@ research/    REA findings, spec and capture tooling (raw captures are git-ignore
 
 | Variable | Purpose |
 |---|---|
-| `GRIDBASE_OIDC_ISSUER` | The provider's issuer URL (its `/.well-known/openid-configuration` must exist) |
-| `GRIDBASE_OIDC_CLIENT_ID`, `GRIDBASE_OIDC_CLIENT_SECRET` | The app registration |
-| `GRIDBASE_OIDC_NAME` | Button label, e.g. `Google` ("Sign in with Google") |
-| `GRIDBASE_OIDC_DOMAINS` | Optional: only these email domains, comma-separated |
-| `GRIDBASE_OIDC_ONLY` | `true` turns password sign-in and sign-up off |
+| `FERTABLE_OIDC_ISSUER` | The provider's issuer URL (its `/.well-known/openid-configuration` must exist) |
+| `FERTABLE_OIDC_CLIENT_ID`, `FERTABLE_OIDC_CLIENT_SECRET` | The app registration |
+| `FERTABLE_OIDC_NAME` | Button label, e.g. `Google` ("Sign in with Google") |
+| `FERTABLE_OIDC_DOMAINS` | Optional: only these email domains, comma-separated |
+| `FERTABLE_OIDC_ONLY` | `true` turns password sign-in and sign-up off |
 
   It uses the authorization code flow with PKCE, ties each sign-in to the browser that started it,
   and checks the ID token's signature, issuer, audience, expiry and nonce. An existing account with

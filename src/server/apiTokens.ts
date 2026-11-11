@@ -78,5 +78,5 @@ export function apiRateLimit(tokenId: string) {
   const sec = Math.floor(Date.now() / 1000);
   const b = buckets.get(tokenId);
   if (!b || b.at !== sec) { buckets.set(tokenId, { at: sec, n: 1 }); return; }
-  if (++b.n > Number(process.env.GRIDBASE_API_PER_SECOND ?? 10)) throw new AuthError(429, "Rate limit reached: wait a second and try again");
+  if (++b.n > Number(process.env.FERTABLE_API_PER_SECOND ?? 10)) throw new AuthError(429, "Rate limit reached: wait a second and try again");
 }

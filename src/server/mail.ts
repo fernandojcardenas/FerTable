@@ -2,8 +2,8 @@
 // message is written to the server log, which is enough to run everything locally.
 //
 //   SMTP_URL=smtps://user:password@smtp.example.com:465
-//   MAIL_FROM="gridbase <no-reply@example.com>"
-//   APP_URL=https://gridbase.example.com      (used for links in emails)
+//   MAIL_FROM="FerTable <no-reply@example.com>"
+//   APP_URL=https://fertable.example.com      (used for links in emails)
 
 import nodemailer, { type Transporter } from "nodemailer";
 
@@ -38,7 +38,7 @@ export async function sendMail(mail: Mail): Promise<void> {
     return;
   }
   transporter ??= nodemailer.createTransport(process.env.SMTP_URL);
-  await transporter.sendMail({ from: process.env.MAIL_FROM ?? "gridbase <no-reply@localhost>", to: mail.to, subject, text: mail.text });
+  await transporter.sendMail({ from: process.env.MAIL_FROM ?? "FerTable <no-reply@localhost>", to: mail.to, subject, text: mail.text });
 }
 
 /** Send without making the caller wait or fail; problems are logged. */
@@ -51,8 +51,8 @@ export function sendMailInBackground(mail: Mail): void {
 export function resetEmail(to: string, name: string, link: string): Mail {
   return {
     to,
-    subject: "Reset your gridbase password",
-    text: `Hi ${oneLine(name, 60)},\n\nSomeone (hopefully you) asked to reset your gridbase password. Choose a new one here:\n\n${link}\n\nThe link works once and expires in an hour. If you didn't ask for this, you can ignore this email; your password hasn't changed.\n`,
+    subject: "Reset your FerTable password",
+    text: `Hi ${oneLine(name, 60)},\n\nSomeone (hopefully you) asked to reset your FerTable password. Choose a new one here:\n\n${link}\n\nThe link works once and expires in an hour. If you didn't ask for this, you can ignore this email; your password hasn't changed.\n`,
   };
 }
 
@@ -60,22 +60,22 @@ export function sharedEmail(to: string, inviter: string, baseName: string, role:
   return {
     to,
     subject: `${oneLine(inviter, 60)} shared “${oneLine(baseName, 80)}” with you`,
-    text: `${oneLine(inviter, 60)} gave you ${role} access to “${oneLine(baseName, 80)}” on gridbase.\n\nOpen it here:\n\n${link}\n`,
+    text: `${oneLine(inviter, 60)} gave you ${role} access to “${oneLine(baseName, 80)}” on FerTable.\n\nOpen it here:\n\n${link}\n`,
   };
 }
 
 export function inviteEmail(to: string, inviter: string, baseName: string, role: string, link: string): Mail {
   return {
     to,
-    subject: `${oneLine(inviter, 60)} invited you to “${oneLine(baseName, 80)}” on gridbase`,
-    text: `${oneLine(inviter, 60)} invited you to “${oneLine(baseName, 80)}” on gridbase as ${/^[aeiou]/.test(role) ? `an ${role}` : `a ${role}`}.\n\nSign up with this email address (${to}), or confirm it if you already have an account, to get access:\n\n${link}\n`,
+    subject: `${oneLine(inviter, 60)} invited you to “${oneLine(baseName, 80)}” on FerTable`,
+    text: `${oneLine(inviter, 60)} invited you to “${oneLine(baseName, 80)}” on FerTable as ${/^[aeiou]/.test(role) ? `an ${role}` : `a ${role}`}.\n\nSign up with this email address (${to}), or confirm it if you already have an account, to get access:\n\n${link}\n`,
   };
 }
 
 export function verifyEmail(to: string, name: string, link: string): Mail {
   return {
     to,
-    subject: "Confirm your email for gridbase",
-    text: `Hi ${oneLine(name, 60)},\n\nPlease confirm this is your email address:\n\n${link}\n\nUntil you do, bases that others share with this address stay locked. The link works for a day. If you didn't create a gridbase account, you can ignore this email.\n`,
+    subject: "Confirm your email for FerTable",
+    text: `Hi ${oneLine(name, 60)},\n\nPlease confirm this is your email address:\n\n${link}\n\nUntil you do, bases that others share with this address stay locked. The link works for a day. If you didn't create a FerTable account, you can ignore this email.\n`,
   };
 }

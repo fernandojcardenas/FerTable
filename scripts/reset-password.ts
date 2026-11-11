@@ -1,7 +1,8 @@
 // Make a one-time password reset link for someone (there's no email sending yet).
 //   npm run reset-password -- someone@example.com
-// The gridbase server must be running; this asks it through a local-only admin endpoint.
+// The FerTable server must be running; this asks it through a local-only admin endpoint.
 
+import "../src/server/env";
 import { readFileSync } from "node:fs";
 import { adminTokenPath } from "../src/server/auth";
 
@@ -14,7 +15,7 @@ let token: string;
 try {
   token = readFileSync(adminTokenPath(), "utf8").trim();
 } catch {
-  console.error(`Can't read ${adminTokenPath()}. Start the gridbase server once first (it creates this file).`);
+  console.error(`Can't read ${adminTokenPath()}. Start the FerTable server once first (it creates this file).`);
   process.exit(1);
 }
 const port = process.env.PORT ?? "3210";
@@ -24,7 +25,7 @@ const res = await fetch(`http://${process.env.HOST ?? "localhost"}:${port}/api/a
   body: JSON.stringify({ email }),
 }).catch(() => null);
 if (!res) {
-  console.error(`The gridbase server isn't reachable on port ${port}. Start it with npm run dev.`);
+  console.error(`The FerTable server isn't reachable on port ${port}. Start it with npm run dev.`);
   process.exit(1);
 }
 const body = await res.json();

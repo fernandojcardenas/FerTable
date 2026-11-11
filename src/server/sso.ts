@@ -2,28 +2,28 @@
 // Auth0, Keycloak and others). Authorization code flow with PKCE; the ID token's
 // signature, issuer, audience, expiry and nonce are all checked before anyone is signed in.
 //
-// Settings: GRIDBASE_OIDC_ISSUER, GRIDBASE_OIDC_CLIENT_ID, GRIDBASE_OIDC_CLIENT_SECRET,
-// optional GRIDBASE_OIDC_NAME (button label), GRIDBASE_OIDC_DOMAINS (allowed email
-// domains, comma-separated) and GRIDBASE_OIDC_ONLY=true (turn password sign-in off).
+// Settings: FERTABLE_OIDC_ISSUER, FERTABLE_OIDC_CLIENT_ID, FERTABLE_OIDC_CLIENT_SECRET,
+// optional FERTABLE_OIDC_NAME (button label), FERTABLE_OIDC_DOMAINS (allowed email
+// domains, comma-separated) and FERTABLE_OIDC_ONLY=true (turn password sign-in off).
 
 import { createHash, createPublicKey, randomBytes, verify as verifySig, type JsonWebKey } from "node:crypto";
 import { AuthError } from "./auth";
 import { appUrl } from "./mail";
 
-export const SSO_COOKIE = "gb_sso";
+export const SSO_COOKIE = "ft_sso";
 
 type Discovery = { issuer: string; authorization_endpoint: string; token_endpoint: string; jwks_uri: string; userinfo_endpoint?: string };
 
 export function ssoSettings() {
-  const issuer = process.env.GRIDBASE_OIDC_ISSUER?.replace(/\/$/, "");
-  const clientId = process.env.GRIDBASE_OIDC_CLIENT_ID;
+  const issuer = process.env.FERTABLE_OIDC_ISSUER?.replace(/\/$/, "");
+  const clientId = process.env.FERTABLE_OIDC_CLIENT_ID;
   if (!issuer || !clientId) return null;
   return {
     issuer, clientId,
-    clientSecret: process.env.GRIDBASE_OIDC_CLIENT_SECRET ?? "",
-    name: process.env.GRIDBASE_OIDC_NAME || "single sign-on",
-    domains: (process.env.GRIDBASE_OIDC_DOMAINS ?? "").split(",").map((d) => d.trim().toLowerCase()).filter(Boolean),
-    only: process.env.GRIDBASE_OIDC_ONLY === "true",
+    clientSecret: process.env.FERTABLE_OIDC_CLIENT_SECRET ?? "",
+    name: process.env.FERTABLE_OIDC_NAME || "single sign-on",
+    domains: (process.env.FERTABLE_OIDC_DOMAINS ?? "").split(",").map((d) => d.trim().toLowerCase()).filter(Boolean),
+    only: process.env.FERTABLE_OIDC_ONLY === "true",
   };
 }
 
@@ -45,7 +45,7 @@ async function getJson<T>(url: string): Promise<T> {
 async function getDiscovery(issuer: string): Promise<Discovery> {
   if (discovery && Date.now() - discovery.at < 3600_000) return discovery.doc;
   const doc = await getJson<Discovery>(`${issuer}/.well-known/openid-configuration`);
-  if (doc.issuer.replace(/\/$/, "") !== issuer) throw new Error("The identity provider's issuer doesn't match GRIDBASE_OIDC_ISSUER");
+  if (doc.issuer.replace(/\/$/, "") !== issuer) throw new Error("The identity provider's issuer doesn't match FERTABLE_OIDC_ISSUER");
   discovery = { at: Date.now(), doc };
   return doc;
 }

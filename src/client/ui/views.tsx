@@ -94,7 +94,7 @@ export function KanbanView({ view }: { view: View }) {
             onDrop={(e) => {
               e.preventDefault();
               setDropOn(null);
-              const rowId = e.dataTransfer.getData("text/gridbase-row");
+              const rowId = e.dataTransfer.getData("text/fertable-row");
               if (rowId && snap.state.rows[rowId]) client.dispatch({ type: "row.update", rowId, cells: { [stackField.id]: col.id } });
             }}>
             <div className="kanban-col-head">
@@ -105,7 +105,7 @@ export function KanbanView({ view }: { view: View }) {
             </div>
             {colRows.map((r) => (
               <RecordCard key={r.id} row={r} fields={cardFields} view={view} coverFieldId={view.config.kanban?.coverFieldId}
-                onDragStart={(e) => { e.dataTransfer.setData("text/gridbase-row", r.id); e.dataTransfer.effectAllowed = "move"; }} />
+                onDragStart={(e) => { e.dataTransfer.setData("text/fertable-row", r.id); e.dataTransfer.effectAllowed = "move"; }} />
             ))}
           </div>
         );
@@ -211,7 +211,7 @@ export function CalendarView({ view }: { view: View }) {
               onDrop={(e) => {
                 e.preventDefault();
                 setDropOn(null);
-                const rowId = e.dataTransfer.getData("text/gridbase-row");
+                const rowId = e.dataTransfer.getData("text/fertable-row");
                 const row = snap.state.rows[rowId];
                 if (row) client.dispatch({ type: "row.update", rowId, cells: { [dateField.id]: toValue(k, row.cells[dateField.id] as string | undefined) } });
               }}>
@@ -227,7 +227,7 @@ export function CalendarView({ view }: { view: View }) {
               {list.slice(0, 4).map((r) => (
                 <button key={r.id} className="cal-event" draggable={editable}
                   style={(() => { const col = recordColor(snap.computer, r, view.config.colors); return col ? { borderLeft: `4px solid var(--s-${col})` } : undefined; })()}
-                  onDragStart={(e) => e.dataTransfer.setData("text/gridbase-row", r.id)}
+                  onDragStart={(e) => e.dataTransfer.setData("text/fertable-row", r.id)}
                   onClick={() => openRecord(r.id)}>{snap.computer.primaryName(r.id)}</button>
               ))}
               {list.length > 4 && <span className="muted small">+{list.length - 4} more</span>}

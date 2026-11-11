@@ -2,6 +2,7 @@
 //   npm run cleanup-files            files unused and older than 7 days
 //   npm run cleanup-files -- 0       any unused file, right now
 
+import "../src/server/env";
 import { readFileSync } from "node:fs";
 import { adminTokenPath } from "../src/server/auth";
 

@@ -1,10 +1,10 @@
 import type { MetadataRoute } from "next";
 
-// The web app manifest (served at /manifest.webmanifest) that makes gridbase installable.
+// The web app manifest (served at /manifest.webmanifest) that makes FerTable installable.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "gridbase",
-    short_name: "gridbase",
+    name: "FerTable",
+    short_name: "FerTable",
     description: "Spreadsheet-database with live sync",
     start_url: "/",
     scope: "/",

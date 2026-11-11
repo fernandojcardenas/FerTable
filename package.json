@@ -1,5 +1,5 @@
 {
-  "name": "gridbase",
+  "name": "fertable",
   "version": "0.1.0",
   "private": true,
   "description": "An original spreadsheet-database app with live sync (Next.js + Postgres).",

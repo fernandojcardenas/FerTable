@@ -341,7 +341,7 @@ export class BaseClient {
       }
       case "notification":
         // The bell listens for this and reloads.
-        window.dispatchEvent(new Event("gridbase:notification"));
+        window.dispatchEvent(new Event("fertable:notification"));
         return;
       case "access":
         if (msg.role === null) {
@@ -428,7 +428,7 @@ export class BaseClient {
   // ---- undo history that survives a reload (per tab: sessionStorage) ----
 
   private get historyKey() {
-    return `gridbase:history:${this.baseId}`;
+    return `fertable:history:${this.baseId}`;
   }
 
   private loadHistory() {

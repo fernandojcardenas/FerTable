@@ -32,9 +32,9 @@ export function NotificationsBell() {
   useEffect(() => {
     load();
     const t = setInterval(load, 60_000);
-    window.addEventListener("gridbase:notification", load);
+    window.addEventListener("fertable:notification", load);
     window.addEventListener("focus", load);
-    return () => { clearInterval(t); window.removeEventListener("gridbase:notification", load); window.removeEventListener("focus", load); };
+    return () => { clearInterval(t); window.removeEventListener("fertable:notification", load); window.removeEventListener("focus", load); };
   }, [load]);
 
   const read = async (ids?: string[]) => {

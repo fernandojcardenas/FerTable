@@ -17,7 +17,7 @@ type Hook = WebhookInfo & { secret: string };
 const MAX_PER_BASE = 10;
 const MAX_CHANGES = 500;
 const DISABLE_AFTER = 20;
-const PER_HOUR = Number(process.env.GRIDBASE_WEBHOOKS_PER_HOUR ?? 1000);
+const PER_HOUR = Number(process.env.FERTABLE_WEBHOOKS_PER_HOUR ?? 1000);
 
 const cache = new Map<string, Promise<Hook[]>>();
 
@@ -120,7 +120,7 @@ async function send(baseId: string, h: Hook, body: string) {
   let status: string;
   let ok = false;
   try {
-    const r = await safePost(h.url, body, 10_000, { "x-gridbase-webhook": h.id, "x-gridbase-timestamp": ts, "x-gridbase-signature": `sha256=${sig}` });
+    const r = await safePost(h.url, body, 10_000, { "x-fertable-webhook": h.id, "x-fertable-timestamp": ts, "x-fertable-signature": `sha256=${sig}` });
     ok = r.status >= 200 && r.status < 300;
     status = `HTTP ${r.status}`;
   } catch (e) {

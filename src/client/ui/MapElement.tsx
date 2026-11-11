@@ -1,14 +1,14 @@
 "use client";
 
 // A map of records with Leaflet. Tiles come from OpenStreetMap unless
-// NEXT_PUBLIC_GRIDBASE_MAP_TILES points somewhere else.
+// NEXT_PUBLIC_FERTABLE_MAP_TILES points somewhere else.
 
 import { useEffect, useRef } from "react";
 import "leaflet/dist/leaflet.css";
 import type { MapPoint } from "@/shared/interfaces";
 
-const TILES = process.env.NEXT_PUBLIC_GRIDBASE_MAP_TILES || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const ATTRIBUTION = process.env.NEXT_PUBLIC_GRIDBASE_MAP_ATTRIBUTION || "© OpenStreetMap contributors";
+const TILES = process.env.NEXT_PUBLIC_FERTABLE_MAP_TILES || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const ATTRIBUTION = process.env.NEXT_PUBLIC_FERTABLE_MAP_ATTRIBUTION || "© OpenStreetMap contributors";
 
 export function MapElement({ points, onOpen }: { points: MapPoint[]; onOpen: (rowId: string) => void }) {
   const box = useRef<HTMLDivElement>(null);

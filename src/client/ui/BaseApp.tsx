@@ -43,10 +43,10 @@ const VIEW_TYPES: { type: ViewType; label: string; icon: string }[] = [
 const viewIcon = (t: ViewType) => VIEW_TYPES.find((v) => v.type === t)?.icon ?? "▦";
 
 function readLast(baseId: string): { tableId?: string; viewId?: string } {
-  try { return JSON.parse(localStorage.getItem(`gridbase:last:${baseId}`) ?? "{}"); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(`fertable:last:${baseId}`) ?? "{}"); } catch { return {}; }
 }
 function writeLast(baseId: string, v: { tableId: string; viewId: string }) {
-  try { localStorage.setItem(`gridbase:last:${baseId}`, JSON.stringify(v)); } catch { /* storage may be blocked */ }
+  try { localStorage.setItem(`fertable:last:${baseId}`, JSON.stringify(v)); } catch { /* storage may be blocked */ }
 }
 
 export default function BaseApp({ baseId }: { baseId: string }) {
@@ -78,7 +78,7 @@ export default function BaseApp({ baseId }: { baseId: string }) {
     return () => { cancelled = true; c?.close(); };
   }, [baseId]);
 
-  if (loadError) return <main className="home"><h1>gridbase</h1><p>{loadError}</p><a href="/">← All bases</a></main>;
+  if (loadError) return <main className="home"><h1>FerTable</h1><p>{loadError}</p><a href="/">← All bases</a></main>;
   if (!client || !me) return <main className="home"><p className="muted">Loading base…</p></main>;
   return <LoadedBase client={client} me={me} />;
 }
@@ -127,7 +127,7 @@ function LoadedBase({ client, me }: { client: BaseClient; me: Me }) {
   useEffect(() => { if (tableId && viewId) writeLast(baseId, { tableId, viewId }); }, [baseId, tableId, viewId]);
   // A search belongs to the view it was typed in.
   useEffect(() => setSearch(""), [viewId]);
-  useEffect(() => { document.title = `${state.base.name} · gridbase`; }, [state.base.name]);
+  useEffect(() => { document.title = `${state.base.name} · FerTable`; }, [state.base.name]);
 
   // Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z or Ctrl+Y redoes. Text boxes keep their own undo.
   useEffect(() => {

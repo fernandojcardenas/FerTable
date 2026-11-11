@@ -2,7 +2,7 @@
 
 Scope: only the Airtable base **Test Base** (`appXXXXXXXXXXXXXX`). Everything here
 comes from watching the app in a test account. It describes *behavior*, not
-Airtable's code. Our clone ("gridbase") is an original implementation.
+Airtable's code. Our clone ("FerTable") is an original implementation.
 
 Legend: **[O]** observed directly · **[I]** inferred from observations · **[?]** unknown / still to check
 

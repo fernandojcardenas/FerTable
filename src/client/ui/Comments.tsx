@@ -135,7 +135,7 @@ export function ActivityPanel({ rowId }: { rowId: string }) {
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [olderFrom, setOlderFrom] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter>(() => {
-    try { return (localStorage.getItem("gridbase:activity-filter") as Filter) || "all"; } catch { return "all"; }
+    try { return (localStorage.getItem("fertable:activity-filter") as Filter) || "all"; } catch { return "all"; }
   });
   const [members, setMembers] = useState<Member[]>([]);
   const [me, setMe] = useState<string | null>(null);
@@ -150,7 +150,7 @@ export function ActivityPanel({ rowId }: { rowId: string }) {
 
   const chooseFilter = (f: Filter) => {
     setFilter(f);
-    try { localStorage.setItem("gridbase:activity-filter", f); } catch { /* storage may be blocked */ }
+    try { localStorage.setItem("fertable:activity-filter", f); } catch { /* storage may be blocked */ }
   };
 
   useEffect(() => {

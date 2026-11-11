@@ -120,8 +120,8 @@ function Webhooks() {
   return (
     <div className="stack" style={{ gap: 10 }}>
       <p className="muted small" style={{ margin: 0 }}>
-        After every change, gridbase POSTs the created, updated and deleted records (as JSON) to each address. Check the
-        {" "}<code>X-Gridbase-Signature</code> header: it's <code>sha256=</code> + HMAC-SHA256 of <code>{"<X-Gridbase-Timestamp>.<body>"}</code> with the webhook's secret.
+        After every change, FerTable POSTs the created, updated and deleted records (as JSON) to each address. Check the
+        {" "}<code>X-FerTable-Signature</code> header: it's <code>sha256=</code> + HMAC-SHA256 of <code>{"<X-FerTable-Timestamp>.<body>"}</code> with the webhook's secret.
         A webhook that fails 20 times in a row is switched off.
       </p>
       {secret && (
@@ -142,7 +142,7 @@ function Webhooks() {
         </div>
       ))}
       <form className="row" style={{ flexWrap: "wrap" }} onSubmit={(e) => void add(e)}>
-        <input className="input" style={{ flex: 1, minWidth: 240 }} placeholder="https://example.com/hooks/gridbase" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Webhook URL" />
+        <input className="input" style={{ flex: 1, minWidth: 240 }} placeholder="https://example.com/hooks/fertable" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Webhook URL" />
         <select className="select" style={{ width: 180 }} value={tableId} onChange={(e) => setTableId(e.target.value)} aria-label="Table">
           <option value="">All tables</option>
           {snap.state.tableOrder.map((id) => <option key={id} value={id}>{snap.state.tables[id].name}</option>)}

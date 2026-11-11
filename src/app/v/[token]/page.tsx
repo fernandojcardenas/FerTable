@@ -46,7 +46,7 @@ export default function SharedViewPage({ params }: { params: Promise<{ token: st
     URL.revokeObjectURL(a.href);
   }
 
-  if (error) return <main className="home"><h1>gridbase</h1><p>{error}</p></main>;
+  if (error) return <main className="home"><h1>FerTable</h1><p>{error}</p></main>;
   if (!data) return <main className="home"><p className="muted">Loading…</p></main>;
   const fileUrl = (id: string) => `/api/shared/views/${encodeURIComponent(token)}/files/${id}`;
   return (
@@ -86,7 +86,7 @@ export default function SharedViewPage({ params }: { params: Promise<{ token: st
         {rows.length === 0 && <p className="muted" style={{ padding: 16 }}>No records{q ? " match your search" : ""}.</p>}
       </div>
       <footer className="shared-foot muted small">
-        {rows.length.toLocaleString()} record{rows.length === 1 ? "" : "s"}{data.truncated ? " (showing the first 5,000)" : ""} · Read-only view shared from gridbase
+        {rows.length.toLocaleString()} record{rows.length === 1 ? "" : "s"}{data.truncated ? " (showing the first 5,000)" : ""} · Read-only view shared from FerTable
       </footer>
     </div>
   );

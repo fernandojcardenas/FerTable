@@ -1,7 +1,7 @@
-// gridbase service worker: makes the app installable and keeps it opening when offline.
+// FerTable service worker: makes the app installable and keeps it opening when offline.
 // Built files (/_next/static, icons) are cached; pages and data always come from the
 // network, so nothing private is stored. With no network, pages show /offline.html.
-const VERSION = "gridbase-v1";
+const VERSION = "fertable-v1";
 const PRECACHE = ["/offline.html", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {

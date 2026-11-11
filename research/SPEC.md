@@ -1,6 +1,6 @@
-# gridbase — product & architecture spec
+# FerTable — product & architecture spec
 
-gridbase is an original spreadsheet-database app. Its behavior is modeled on
+FerTable is an original spreadsheet-database app. Its behavior is modeled on
 what we observed in Airtable (see `FINDINGS.md`), but every name, API, schema
 and line of code here is our own. Nothing is copied from Airtable's code.
 
@@ -154,7 +154,7 @@ engine, computed fields, filtering and sorting.
 ## 7. Checked against Airtable (2026-11-10 recording)
 
 The second recording (FINDINGS §7) covered links, computed fields, sorts, forms,
-automations and live sync. How gridbase compares:
+automations and live sync. How FerTable compares:
 
 **Already the same**
 - Links are two-way: both sides change in one transaction.
@@ -167,14 +167,14 @@ automations and live sync. How gridbase compares:
 
 **Different on purpose (keep ours)**
 - *Who computes.* Airtable computes lookups, rollups and formulas on the server and
-  pushes the new cell values. gridbase derives them on both sides from stored
+  pushes the new cell values. FerTable derives them on both sides from stored
   cells, which keeps traffic small and lets edits show up instantly. Revisit only
   if very large bases make full recomputes slow.
 - *Removing a sort.* Airtable rewrites the view's manual order when a sort is
-  applied, so rows stay sorted after the sort is removed. gridbase sorts when it
+  applied, so rows stay sorted after the sort is removed. FerTable sorts when it
   draws, so removing a sort brings back the manual order. Ours is less
   surprising. A "keep this order" button could cover the other case.
-- *Empty values.* Airtable puts empties first when ascending; gridbase keeps
+- *Empty values.* Airtable puts empties first when ascending; FerTable keeps
   them last in both directions.
 
 **Worth adopting (most useful first)**
@@ -192,7 +192,7 @@ automations and live sync. How gridbase compares:
    text) without changing anything, and "Run now" runs the saved automation once
    for real. Email steps take `{Field}` placeholders in To/Subject/Message, at most
    10 recipients, and a per-base cap of 100 automation emails an hour
-   (`GRIDBASE_AUTOMATION_EMAILS_PER_HOUR`).
+   (`FERTABLE_AUTOMATION_EMAILS_PER_HOUR`).
 4. ~~**Rollups as a formula over `values`**~~ **Done 2026-11-10:** the Summary menu
    has "Custom formula…", which starts from the chosen preset's formula
    (`MAX(values)` etc.) and previews the result on the first record. `values` only

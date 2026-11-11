@@ -23,6 +23,6 @@ test("session cookie is httpOnly and same-site", () => {
   assert.match(c, /HttpOnly/);
   assert.match(c, /SameSite=Lax/);
   assert.match(c, /Secure/);
-  assert.equal(readCookie("a=1; gb_session=tok123; b=2", "gb_session"), "tok123");
-  assert.equal(readCookie(undefined, "gb_session"), null);
+  assert.equal(readCookie("a=1; ft_session=tok123; b=2", "ft_session"), "tok123");
+  assert.equal(readCookie(undefined, "ft_session"), null);
 });

@@ -3,11 +3,11 @@ import "./globals.css";
 import { PwaRegister } from "@/client/ui/PwaRegister";
 
 export const metadata: Metadata = {
-  title: "gridbase",
+  title: "FerTable",
   description: "Spreadsheet-database with live sync",
-  applicationName: "gridbase",
+  applicationName: "FerTable",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "gridbase", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "FerTable", statusBarStyle: "default" },
   icons: { icon: "/icons/icon-192.png", apple: "/icons/apple-touch-icon.png" },
   formatDetection: { telephone: false },
 };

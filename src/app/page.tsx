@@ -71,7 +71,7 @@ export default function Home() {
   return (
     <main className="home">
       <div className="row">
-        <h1 style={{ margin: 0 }}>gridbase</h1>
+        <h1 style={{ margin: 0 }}>FerTable</h1>
         <span className="spacer" />
         {me?.admin && <a className="btn ghost" href="/admin">Admin</a>}
         {me && <NotificationsBell />}

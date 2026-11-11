@@ -15,19 +15,19 @@ import { appUrl, resetEmail, sendMail, verifyEmail } from "./mail";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts: object) => Promise<Buffer>;
 
-export const SESSION_COOKIE = "gb_session";
+export const SESSION_COOKIE = "ft_session";
 const SESSION_DAYS = 30;
 export const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3, owner: 4 };
 
 export type User = { id: string; email: string; name: string; verified: boolean; admin?: boolean };
 
-/** Set GRIDBASE_VERIFY_EMAIL=false to skip email confirmation (every account counts as confirmed). */
-export const verifyEmailRequired = () => process.env.GRIDBASE_VERIFY_EMAIL !== "false";
+/** Set FERTABLE_VERIFY_EMAIL=false to skip email confirmation (every account counts as confirmed). */
+export const verifyEmailRequired = () => process.env.FERTABLE_VERIFY_EMAIL !== "false";
 
 export const USER_COLS = "u.id, u.email, u.name, (u.email_verified_at is not null) as verified, u.is_admin as admin";
 
 /** With single sign-on set to "only", password sign-in and sign-up are off. */
-export const ssoOnly = () => process.env.GRIDBASE_OIDC_ONLY === "true" && Boolean(process.env.GRIDBASE_OIDC_ISSUER);
+export const ssoOnly = () => process.env.FERTABLE_OIDC_ONLY === "true" && Boolean(process.env.FERTABLE_OIDC_ISSUER);
 
 export class AuthError extends Error {
   constructor(public status: 401 | 403 | 404 | 409 | 422 | 429, message: string) {
@@ -128,7 +128,7 @@ export async function userFromCookie(cookieHeader: string | undefined): Promise<
 
 export async function signup(emailIn: unknown, nameIn: unknown, passwordIn: unknown, ip: string): Promise<{ user: User; token: string }> {
   rateLimit(`signup:${ip}`, 20);
-  if (process.env.GRIDBASE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
+  if (process.env.FERTABLE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
   if (ssoOnly()) throw new AuthError(403, "Accounts on this server are made by signing in with single sign-on");
   const email = normalizeEmail(emailIn);
   const password = checkPassword(passwordIn);
@@ -446,7 +446,7 @@ export async function loginWithSso(emailIn: string, nameIn: string, emailVerifie
     }
     return { user: { ...rows[0], verified: true }, token: await createSession(rows[0].id), created: false };
   }
-  if (process.env.GRIDBASE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
+  if (process.env.FERTABLE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
   const user: User = { id: newId("usr"), email, name: nameIn.trim().slice(0, 100) || email.split("@")[0], verified: emailVerified };
   const hash = await hashPassword(randomBytes(32).toString("base64"));
   await db.tx(async (q) => {

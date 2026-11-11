@@ -1,6 +1,7 @@
-// gridbase server: Next.js pages + JSON API + WebSocket live sync on one port.
+// FerTable server: Next.js pages + JSON API + WebSocket live sync on one port.
 // Every API call, file download and socket needs a signed-in user with a role on the base.
 
+import "./src/server/env";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import next from "next";
@@ -36,8 +37,8 @@ import {
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3210);
 const hostname = process.env.HOST ?? "localhost";
-// Send cookies only over HTTPS in production (set GRIDBASE_SECURE_COOKIES=false to test production over plain HTTP).
-const secureCookies = !dev && process.env.GRIDBASE_SECURE_COOKIES !== "false";
+// Send cookies only over HTTPS in production (set FERTABLE_SECURE_COOKIES=false to test production over plain HTTP).
+const secureCookies = !dev && process.env.FERTABLE_SECURE_COOKIES !== "false";
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
@@ -240,8 +241,8 @@ async function handleShared(req: IncomingMessage, res: ServerResponse, parts: st
 }
 
 /** Responses per visitor and per form, each per 15 minutes. */
-const PUBLIC_FORM_PER_VISITOR = Number(process.env.GRIDBASE_FORM_LIMIT_PER_VISITOR ?? 10);
-const PUBLIC_FORM_PER_FORM = Number(process.env.GRIDBASE_FORM_LIMIT_PER_FORM ?? 300);
+const PUBLIC_FORM_PER_VISITOR = Number(process.env.FERTABLE_FORM_LIMIT_PER_VISITOR ?? 10);
+const PUBLIC_FORM_PER_FORM = Number(process.env.FERTABLE_FORM_LIMIT_PER_FORM ?? 300);
 
 /** Log public links that were turned on, off or replaced by a change. */
 async function auditLinks(baseId: string, before: import("./src/shared/types").BaseState | null, user: User, ip: string) {
@@ -738,5 +739,5 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(port, hostname, () => {
-  console.log(`gridbase ready on http://${hostname}:${port} (${dev ? "dev" : "production"})`);
+  console.log(`FerTable ready on http://${hostname}:${port} (${dev ? "dev" : "production"})`);
 });

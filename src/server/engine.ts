@@ -952,7 +952,7 @@ export class Engine {
     const timer = setTimeout(() => {
       this.syncTimers.delete(sourceBaseId);
       void this.syncTablesFrom(sourceBaseId).catch((e) => console.error("sync error", e));
-    }, Number(process.env.GRIDBASE_SYNC_DELAY_MS ?? 2000));
+    }, Number(process.env.FERTABLE_SYNC_DELAY_MS ?? 2000));
     timer.unref?.();
     this.syncTimers.set(sourceBaseId, timer);
   }
@@ -1036,8 +1036,8 @@ const MAX_RUN_STEPS = 200;
 export type RunResult = { status: "success" | "failed"; message: string };
 
 /** AI field limits: answers at once, answers per base per hour, rows filled automatically when a prompt changes. */
-const AI_CONCURRENCY = Number(process.env.GRIDBASE_AI_CONCURRENCY ?? 2);
-const AI_PER_HOUR = Number(process.env.GRIDBASE_AI_PER_HOUR ?? 500);
+const AI_CONCURRENCY = Number(process.env.FERTABLE_AI_CONCURRENCY ?? 2);
+const AI_PER_HOUR = Number(process.env.FERTABLE_AI_PER_HOUR ?? 500);
 const AI_AUTO_ROWS = 200;
 
 /** How long deleted records can be restored (and keep their files). */
@@ -1047,9 +1047,9 @@ const isAttachmentList = (v: unknown): v is Attachment[] =>
   Array.isArray(v) && v.length > 0 && v.every((a) => a && typeof a === "object" && typeof (a as Attachment).id === "string" && typeof (a as Attachment).url === "string");
 
 /** Automation emails per base per hour, so a busy or careless automation can't flood inboxes. */
-export const EMAILS_PER_HOUR = Number(process.env.GRIDBASE_AUTOMATION_EMAILS_PER_HOUR ?? 100);
+export const EMAILS_PER_HOUR = Number(process.env.FERTABLE_AUTOMATION_EMAILS_PER_HOUR ?? 100);
 /** Slack, Sheets and webhook messages per base per hour. */
-export const POSTS_PER_HOUR = Number(process.env.GRIDBASE_AUTOMATION_POSTS_PER_HOUR ?? 300);
+export const POSTS_PER_HOUR = Number(process.env.FERTABLE_AUTOMATION_POSTS_PER_HOUR ?? 300);
 type Budget = Map<string, { windowStart: number; used: number }>;
 const emailBudget: Budget = new Map();
 const postBudget: Budget = new Map();
@@ -1063,7 +1063,7 @@ function takeBudget(budget: Budget, baseId: string, count: number, perHour: numb
 }
 
 function automationFooter(name: string): string {
-  return `\n\n—\nSent by the gridbase automation “${oneLine(name, 80)}”.\n`;
+  return `\n\n—\nSent by the FerTable automation “${oneLine(name, 80)}”.\n`;
 }
 
 const SAVE_CHUNK = 500;
@@ -1098,14 +1098,14 @@ async function persistDiff(q: Queryable, baseId: string, before: BaseState, afte
 }
 
 // One engine per process, shared through globalThis.
-const g = globalThis as { __gridbaseEngine?: Engine };
+const g = globalThis as { __fertableEngine?: Engine };
 export function getEngine(): Engine {
-  if (!g.__gridbaseEngine) {
+  if (!g.__fertableEngine) {
     const e = new Engine();
     onNotify((userId) => e.notifyUser(userId));
-    g.__gridbaseEngine = e;
+    g.__fertableEngine = e;
   }
-  return g.__gridbaseEngine;
+  return g.__fertableEngine;
 }
 
 export { ValidationError };

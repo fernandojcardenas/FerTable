@@ -58,9 +58,9 @@ function LoginForm() {
     <main className="auth-wrap">
       <form className="auth-card" onSubmit={submit}>
         <div className="row" style={{ gap: 10 }}>
-          <span className="base-icon" aria-hidden="true">gb</span>
+          <span className="base-icon" aria-hidden="true">ft</span>
           <div>
-            <h1 style={{ margin: 0, fontSize: 20 }}>{signup ? "Create your account" : "Sign in to gridbase"}</h1>
+            <h1 style={{ margin: 0, fontSize: 20 }}>{signup ? "Create your account" : "Sign in to FerTable"}</h1>
             <span className="muted small">{signup ? "It only takes a moment." : "Welcome back."}</span>
           </div>
         </div>

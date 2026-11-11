@@ -137,7 +137,7 @@ export function GridView({ view }: { view: View }) {
     const r = e.currentTarget.getBoundingClientRect();
     return e.clientY < r.top + r.height / 2 ? "before" : "after";
   };
-  const isRowDrag = (e: React.DragEvent) => e.dataTransfer.types.includes("text/gridbase-row");
+  const isRowDrag = (e: React.DragEvent) => e.dataTransfer.types.includes("text/fertable-row");
   const [widths, setWidths] = useState<Record<string, number>>({});
   // A hidden text box holds keyboard focus for the grid, so typed keys *and*
   // inserted text (dictation, IME, autofill) both reach the selected cell.
@@ -336,7 +336,7 @@ export function GridView({ view }: { view: View }) {
               if (!isRowDrag(e)) return;
               e.preventDefault();
               // Everything comes from the drop itself, so even a very quick drag lands right.
-              dropRow(e.dataTransfer.getData("text/gridbase-row"), row.id, placeFor(e));
+              dropRow(e.dataTransfer.getData("text/fertable-row"), row.id, placeFor(e));
               setDrag(null);
             }}
           >
@@ -345,7 +345,7 @@ export function GridView({ view }: { view: View }) {
               <span
                 className={`drag-handle ${canDrag ? "" : "off"}`} draggable={canDrag} aria-hidden="true"
                 title={canDrag ? "Drag to reorder" : snap.role === "viewer" || snap.role === "commenter" ? "You can't change this base" : "Turn off sorting and grouping to drag records"}
-                onDragStart={(e) => { e.dataTransfer.setData("text/gridbase-row", row.id); e.dataTransfer.effectAllowed = "move"; setDrag({ rowId: row.id, over: null, place: "after" }); }}
+                onDragStart={(e) => { e.dataTransfer.setData("text/fertable-row", row.id); e.dataTransfer.effectAllowed = "move"; setDrag({ rowId: row.id, over: null, place: "after" }); }}
                 onDragEnd={() => setDrag(null)}
               >⠿</span>
               <Popover open={menu?.kind === "row" && menu.rowId === row.id} onClose={() => setMenu(null)} anchor={
