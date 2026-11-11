@@ -19,7 +19,14 @@ function LoginForm() {
   // Single sign-on sends errors back here as ?error=…
   const [error, setError] = useState<string | null>(() => params.get("error"));
   const [sso, setSso] = useState<{ enabled: boolean; name: string; only: boolean } | null>(null);
-  useEffect(() => { fetch("/api/auth/sso").then((r) => r.json()).then(setSso).catch(() => {}); }, []);
+  // Whether this server takes new accounts (FERTABLE_ALLOW_SIGNUP=false turns it off).
+  const [signupOpen, setSignupOpen] = useState(true);
+  useEffect(() => {
+    fetch("/api/auth/sso").then((r) => r.json()).then(setSso).catch(() => {});
+    fetch("/api/server").then((r) => r.json()).then((d) => {
+      if (d.signup === false) { setSignupOpen(false); setMode("login"); }
+    }).catch(() => {});
+  }, []);
   const [forgot, setForgot] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
 
@@ -106,12 +113,16 @@ function LoginForm() {
         <button className="btn primary" disabled={busy} style={{ justifyContent: "center", padding: "8px 12px" }}>
           {busy ? "Please wait…" : signup ? "Create account" : "Sign in"}
         </button>
+        {signupOpen ? (
         <p className="small muted" style={{ margin: 0, textAlign: "center" }}>
           {signup ? "Already have an account? " : "New here? "}
           <button type="button" className="link-btn" onClick={() => { setMode(signup ? "login" : "signup"); setError(null); }}>
             {signup ? "Sign in" : "Create an account"}
           </button>
         </p>
+        ) : (
+          <p className="small muted" style={{ margin: 0, textAlign: "center" }}>New accounts are turned off on this server.</p>
+        )}
         </>
         )}
       </form>

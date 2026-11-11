@@ -65,6 +65,7 @@ Open `https://$DOMAIN` and create your account. The first account is the server'
 | Update to the latest code | `gcloud compute ssh fertable --zone=us-central1-a --command "sudo bash /opt/fertable/deploy/gcp/update.sh"` |
 | See the logs | `gcloud compute ssh fertable --zone=us-central1-a --command "sudo journalctl -u fertable -n 100"` |
 | Turn on email (Gmail) | `gcloud compute ssh fertable --zone=us-central1-a --command "sudo bash /opt/fertable/deploy/gcp/set-email.sh" -- -t` |
+| Stop new accounts (only existing people can sign in) | Add `FERTABLE_ALLOW_SIGNUP=false` to `/etc/fertable/fertable.env`, then `sudo systemctl restart fertable` |
 | Change settings (email, AI) | Edit `/etc/fertable/fertable.env` on the server, then `sudo systemctl restart fertable` |
 | Back up now | `gcloud compute ssh fertable --zone=us-central1-a --command "sudo fertable-backup"` |
 | Make the disk bigger | `gcloud compute disks resize fertable --size=100GB --zone=us-central1-a` (the space appears after a restart) |
