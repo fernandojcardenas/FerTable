@@ -10,6 +10,8 @@ WorkingDirectory=/opt/fertable
 EnvironmentFile=/etc/fertable/fertable.env
 ExecStart=/opt/fertable/node_modules/.bin/tsx server.ts
 Restart=always
+# A normal stop (SIGTERM, used by backups and updates) isn't a failure.
+SuccessExitStatus=143
 RestartSec=3
 # Keep the small machine responsive: FerTable may use most, not all, of its memory.
 MemoryHigh=700M
