@@ -113,8 +113,26 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null;
 }
 
+/**
+ * The session token from a request: the browser's cookie, or for the iOS app an
+ * `Authorization: Bearer <token>` header (personal access tokens, which start with "pat", are for /v1 only).
+ */
+export function sessionToken(headers: { cookie?: string; authorization?: string }): string | null {
+  const bearer = /^Bearer\s+(\S+)$/i.exec(headers.authorization ?? "")?.[1];
+  if (bearer && !bearer.startsWith("pat")) return bearer;
+  return readCookie(headers.cookie, SESSION_COOKIE);
+}
+
+/** The signed-in user for a request (cookie or bearer token). */
+export function userFromRequest(headers: { cookie?: string; authorization?: string }): Promise<User | null> {
+  return userFromToken(sessionToken(headers));
+}
+
 export async function userFromCookie(cookieHeader: string | undefined): Promise<User | null> {
-  const token = readCookie(cookieHeader, SESSION_COOKIE);
+  return userFromToken(readCookie(cookieHeader, SESSION_COOKIE));
+}
+
+async function userFromToken(token: string | null): Promise<User | null> {
   if (!token || token.length > 100) return null;
   const db = await getDb();
   const { rows } = await db.query<User>(
@@ -175,8 +193,8 @@ export async function login(emailIn: unknown, passwordIn: unknown, ip: string): 
   return { user: { id: row.id, email: row.email, name: row.name, verified: row.verified, admin: row.admin }, token: await createSession(row.id) };
 }
 
-export async function logout(cookieHeader: string | undefined): Promise<void> {
-  const token = readCookie(cookieHeader, SESSION_COOKIE);
+export async function logout(headers: { cookie?: string; authorization?: string }): Promise<void> {
+  const token = sessionToken(headers);
   if (!token) return;
   const db = await getDb();
   await db.query("delete from sessions where token_hash = $1", [tokenHash(token)]);
@@ -290,13 +308,13 @@ export async function cancelInvite(baseId: string, emailIn: unknown) {
 // ---- changing & resetting passwords ----
 
 /** Change your own password. Signs out your other devices; this one stays signed in. */
-export async function changePassword(user: User, cookieHeader: string | undefined, current: unknown, next: unknown): Promise<void> {
+export async function changePassword(user: User, headers: { cookie?: string; authorization?: string }, current: unknown, next: unknown): Promise<void> {
   rateLimit(`password:${user.id}`, 10);
   const password = checkPassword(next);
   const db = await getDb();
   const { rows } = await db.query<{ password_hash: string }>("select password_hash from users where id = $1", [user.id]);
   if (!rows[0] || !(await verifyPassword(String(current ?? ""), rows[0].password_hash))) throw new AuthError(401, "Your current password isn't right");
-  const keep = tokenHash(readCookie(cookieHeader, SESSION_COOKIE) ?? "");
+  const keep = tokenHash(sessionToken(headers) ?? "");
   await db.tx(async (q) => {
     await q.query("update users set password_hash = $2 where id = $1", [user.id, await hashPassword(password)]);
     await q.query("delete from sessions where user_id = $1 and token_hash <> $2", [user.id, keep]);

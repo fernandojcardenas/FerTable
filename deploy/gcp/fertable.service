@@ -1,0 +1,23 @@
+[Unit]
+Description=FerTable
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=fertable
+Group=fertable
+WorkingDirectory=/opt/fertable
+EnvironmentFile=/etc/fertable/fertable.env
+ExecStart=/opt/fertable/node_modules/.bin/tsx server.ts
+Restart=always
+RestartSec=3
+# Keep the small machine responsive: FerTable may use most, not all, of its memory.
+MemoryHigh=700M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/fertable
+
+[Install]
+WantedBy=multi-user.target

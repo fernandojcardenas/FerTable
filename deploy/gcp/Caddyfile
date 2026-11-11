@@ -1,0 +1,11 @@
+# Caddy gets and renews the HTTPS certificate on its own, and passes WebSockets through.
+{{DOMAIN}} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3210
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

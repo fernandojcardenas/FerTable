@@ -72,6 +72,8 @@ npm run build
 npm start
 ```
 
+To host it, see [docs/hosting.md](docs/hosting.md): it runs on Google Cloud's always-free machine with automatic HTTPS and nightly backups.
+
 To use a real Postgres server instead of the embedded one:
 
 ```bash

@@ -3,13 +3,14 @@
 
 import "./src/server/env";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import next from "next";
 import { WebSocketServer, type WebSocket } from "ws";
 import { getEngine, ValidationError } from "./src/server/engine";
 import {
   AuthError, cancelInvite, changePassword, clearedCookie, createResetToken, ensureAdminToken, isAdminRequest, listMembers,
-  confirmEmail, login, logout, rateLimit, removeMember, sendVerification, requestPasswordReset, requireRole, resetPassword, roleFor, sessionCookie, setRole, share, signup, userFromCookie, type User,
+  confirmEmail, login, logout, userFromRequest, rateLimit, removeMember, sendVerification, requestPasswordReset, requireRole, resetPassword, roleFor, sessionCookie, setRole, share, signup, userFromCookie, type User,
 } from "./src/server/auth";
 import { getDb } from "./src/server/db";
 import { publicFormDefinition } from "./src/shared/publicForm";
@@ -35,6 +36,7 @@ import {
 } from "./src/server/workspaces";
 
 const dev = process.env.NODE_ENV !== "production";
+const SERVER_VERSION = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
 const port = Number(process.env.PORT ?? 3210);
 const hostname = process.env.HOST ?? "localhost";
 // Send cookies only over HTTPS in production (set FERTABLE_SECURE_COOKIES=false to test production over plain HTTP).
@@ -70,7 +72,16 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   }
 }
 
-const clientIp = (req: IncomingMessage) => req.socket.remoteAddress ?? "unknown";
+// Behind a reverse proxy (Caddy on the hosted server) every request arrives from 127.0.0.1;
+// with FERTABLE_TRUST_PROXY=true the visitor's address comes from X-Forwarded-For instead.
+const TRUST_PROXY = process.env.FERTABLE_TRUST_PROXY === "true";
+const clientIp = (req: IncomingMessage) => {
+  if (TRUST_PROXY) {
+    const hops = String(req.headers["x-forwarded-for"] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return req.socket.remoteAddress ?? "unknown";
+};
 
 /** Changes must come from this site's own pages (blocks cross-site requests that carry the cookie). */
 function sameOrigin(req: IncomingMessage): boolean {
@@ -84,14 +95,32 @@ function sameOrigin(req: IncomingMessage): boolean {
 }
 
 async function requireUser(req: IncomingMessage): Promise<User> {
-  const user = await userFromCookie(req.headers.cookie);
+  const user = await userFromRequest(req.headers);
   if (!user) throw new AuthError(401, "Please sign in");
   return user;
 }
 
+/**
+ * The iOS app asks for its session token in the response (it sends it back as
+ * `Authorization: Bearer …`). Browsers never get it in the body: they use the httpOnly cookie.
+ */
+const forApp = (req: IncomingMessage) => req.headers["x-fertable-client"] === "ios";
+
+/** Public facts about this server, for the iOS app's "connect to a server" screen. */
+function serverInfo() {
+  return {
+    name: "FerTable",
+    version: SERVER_VERSION,
+    api: 1,
+    signup: process.env.FERTABLE_ALLOW_SIGNUP !== "false" && !ssoPublicInfo().only,
+    sso: ssoPublicInfo(),
+    realtime: "/realtime",
+  };
+}
+
 async function handleAuth(req: IncomingMessage, res: ServerResponse, action: string, method: string, url: URL) {
   if (action === "me" && method === "GET") {
-    const user = await userFromCookie(req.headers.cookie);
+    const user = await userFromRequest(req.headers);
     return user ? send(res, 200, { user }) : send(res, 401, { error: "Not signed in" });
   }
   // Single sign-on (OpenID Connect).
@@ -122,8 +151,8 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
   }
   if (method !== "POST") return send(res, 404, { error: "Not found" });
   if (action === "logout") {
-    const who = await userFromCookie(req.headers.cookie);
-    await logout(req.headers.cookie);
+    const who = await userFromRequest(req.headers);
+    await logout(req.headers);
     if (who) audit({ userId: who.id, email: who.email, ip: clientIp(req), action: "auth.logout" });
     return send(res, 200, { ok: true }, { "set-cookie": clearedCookie(secureCookies) });
   }
@@ -131,8 +160,9 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
   if (action === "signup") {
     const { user, token } = await signup(body.email, body.name, body.password, clientIp(req));
     audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.signup" });
+    const appToken = forApp(req) ? { token } : {};
     if (!user.verified) sendVerification(user).catch((e) => console.error("verification email failed:", e instanceof Error ? e.message : e));
-    return send(res, 201, { user, delivery: mailMode() }, { "set-cookie": sessionCookie(token, secureCookies) });
+    return send(res, 201, { user, delivery: mailMode(), ...appToken }, { "set-cookie": sessionCookie(token, secureCookies) });
   }
   if (action === "verify") {
     const user = await confirmEmail(body.token, clientIp(req));
@@ -152,11 +182,11 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
     }
     const { user, token } = result;
     audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.login" });
-    return send(res, 200, { user }, { "set-cookie": sessionCookie(token, secureCookies) });
+    return send(res, 200, { user, ...(forApp(req) ? { token } : {}) }, { "set-cookie": sessionCookie(token, secureCookies) });
   }
   if (action === "password") {
     const user = await requireUser(req);
-    await changePassword(user, req.headers.cookie, body.current, body.password);
+    await changePassword(user, req.headers, body.current, body.password);
     audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.password_changed" });
     return send(res, 200, { ok: true });
   }
@@ -180,7 +210,9 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
 
 /** Operator-only endpoints for local scripts (see scripts/). Need the admin token and a local connection. */
 async function handleAdmin(req: IncomingMessage, res: ServerResponse, action: string) {
-  if (!isAdminRequest(String(req.headers["x-admin-token"] ?? ""), req.socket.remoteAddress)) return send(res, 404, { error: "Not found" });
+  // Anything that came through a proxy is from the internet, whatever the socket says.
+  const proxied = req.headers["x-forwarded-for"] !== undefined || req.headers["x-forwarded-host"] !== undefined;
+  if (proxied || !isAdminRequest(String(req.headers["x-admin-token"] ?? ""), req.socket.remoteAddress)) return send(res, 404, { error: "Not found" });
   const body = await readJson(req);
   if (action === "reset-link") {
     const { token, email } = await createResetToken(body.email);
@@ -323,6 +355,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (method !== "GET" && !sameOrigin(req)) throw new AuthError(403, "Cross-site request blocked");
     if (parts[1] === "auth") { await handleAuth(req, res, parts[2] ?? "", method, url); return; }
     if (parts[1] === "templates" && method === "GET") return send(res, 200, { templates: TEMPLATES });
+    if (parts[1] === "server" && method === "GET" && !parts[2]) return send(res, 200, serverInfo());
     if (parts[1] === "admin" && method === "POST") return await handleAdmin(req, res, parts[2] ?? "");
     if (parts[1] === "forms" && parts[2]) return await handlePublicForm(req, res, parts[2], method);
     if (parts[1] === "shared") return await handleShared(req, res, parts, method);
@@ -699,7 +732,7 @@ const server = createServer((req, res) => {
   }
   void (async () => {
     if (!isPublicPath(url.pathname) || url.pathname === "/login") {
-      const user = await userFromCookie(req.headers.cookie).catch(() => null);
+      const user = await userFromRequest(req.headers).catch(() => null);
       if (!user && url.pathname !== "/login") {
         res.writeHead(302, { location: `/login?next=${encodeURIComponent(url.pathname + url.search)}` });
         return res.end();
@@ -730,7 +763,7 @@ server.on("upgrade", (req, socket, head) => {
   }
   void (async () => {
     if (!sameOrigin(req)) return reject(socket, 403, "Forbidden");
-    const user = await userFromCookie(req.headers.cookie).catch(() => null);
+    const user = await userFromRequest(req.headers).catch(() => null);
     if (!user) return reject(socket, 401, "Unauthorized");
     const role = await roleFor(user.id, url.searchParams.get("baseId") ?? "");
     if (!role) return reject(socket, 403, "Forbidden");

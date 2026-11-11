@@ -1,0 +1,6 @@
+[Unit]
+Description=FerTable nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fertable-backup
