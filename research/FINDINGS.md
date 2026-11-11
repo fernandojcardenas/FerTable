@@ -2,7 +2,7 @@
 
 Scope: only the Airtable base **Test Base** (`appXXXXXXXXXXXXXX`). Everything here
 comes from watching the app in a test account. It describes *behavior*, not
-Airtable's code. Our clone ("FerTable") is an original implementation.
+Airtable's code. My app ("FerTable") is an original implementation.
 
 Legend: **[O]** observed directly · **[I]** inferred from observations · **[?]** unknown / still to check
 
@@ -17,7 +17,7 @@ Raw evidence lives in `research/raw/` (git-ignored, contains test-account data).
   (`/esbuild/by_sha/<sha>/br/chunks/chunk-*.js`). REA evidence:
   `ev_4de2f1f8…` (inspect_web_page with script sources), analysis `ev_153310…`.
 - **[O]** Source maps are referenced (`airtable.com/jsSourceMap/...`) but were
-  not fetched. We don't need Airtable's source.
+  not fetched. I don't need Airtable's source.
 - **[O]** Uses React-style hooks (`useMemo` etc.) and feature-flag gating everywhere.
 - **[O]** Grid DOM marks rows with `data-rowid` and cells with `data-columnid`,
   `data-columnindex`, `data-columntype`; rows have `data-rowindex`.
@@ -29,7 +29,7 @@ Raw evidence lives in `research/raw/` (git-ignored, contains test-account data).
   with query `stringifiedObjectParams`, `requestId`, `secretSocketId`.
 - **[O]** Response is **MessagePack** (`application/msgpack`) using msgpackr
   "records" (ext type `0x72`): each object shape's keys are sent once, then reused.
-  For our clone, plain JSON is fine to start.
+  For FerTable, plain JSON is fine to start.
 - **[O]** Response = `{ msg: "SUCCESS", data: {...} }`. Key parts of `data`:
   - `applicationTransactionNumber` — a per-base counter (3 for a fresh base).
   - `tableSchemas[]` — schema for each table.

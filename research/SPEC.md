@@ -1,11 +1,11 @@
 # FerTable — product & architecture spec
 
 FerTable is an original spreadsheet-database app. Its behavior is modeled on
-what we observed in Airtable (see `FINDINGS.md`), but every name, API, schema
-and line of code here is our own. Nothing is copied from Airtable's code.
+what I observed in Airtable (see `FINDINGS.md`), but every name, API, schema
+and line of code here is my own. Nothing is copied from Airtable's code.
 
 Each section marks where it came from:
-**[obs]** follows observed Airtable behavior · **[ours]** our own design choice.
+**[obs]** follows observed Airtable behavior · **[mine]** my own design choice.
 
 ---
 
@@ -36,7 +36,7 @@ Automation  { id, baseId, name, enabled, trigger, steps[] }
 ActionLog   { baseId, txn, action, clientId, requestId, source, createdAt }
 ```
 
-**View config [obs shape, ours names]:**
+**View config [obs shape, my names]:**
 ```
 { hiddenFieldIds[], fieldOrder[]?, frozenFieldCount,
   filters: { conjunction: "and"|"or", conditions: [ {id, fieldId, operator, value} ] },
@@ -69,14 +69,14 @@ New views copy the config of the view you're on **[obs]**.
 | `createdTime`, `autoNumber` | *computed* | — |
 
 Computed fields are **never stored**. They are derived from stored values by
-one shared module that runs on both client and server **[ours]**.
+one shared module that runs on both client and server **[mine]**.
 
 Links are two-way. Creating a link field also creates its inverse field in the
-other table, and changing one side updates the other in the same transaction **[ours]**.
+other table, and changing one side updates the other in the same transaction **[mine]**.
 
 ## 3. Sync engine
 
-### 3.1 Actions [obs pattern, ours names]
+### 3.1 Actions [obs pattern, my names]
 Every change is one typed action:
 
 ```
@@ -108,9 +108,9 @@ automation.upsert {automation}                          automation.delete {autom
 
 Heartbeat ping every 15 s; reconnect with backoff **[obs: ~15 s heartbeat]**.
 
-Text cells save while typing, debounced to about 600 ms **[obs: periodic saves while typing; ours: shorter delay]**.
+Text cells save while typing, debounced to about 600 ms **[obs: periodic saves while typing; mine: shorter delay]**.
 
-### 3.3 Automations [ours]
+### 3.3 Automations [mine]
 After each committed client transaction, the server checks enabled
 automations. Triggers: `recordCreated`, `recordUpdated` (optional watched
 fields), `recordMatches` (conditions became true). Steps: `updateRecord`
@@ -121,7 +121,7 @@ Each run is logged. A `sendEmail` step (to/subject/body templates) sends after t
 record changes are saved. Step building lives in `src/shared/automation.ts`, so the
 editor can preview a run with the same code the server uses.
 
-## 4. HTTP & socket API [ours]
+## 4. HTTP & socket API [mine]
 
 ```
 GET  /api/bases                       list bases
@@ -144,7 +144,7 @@ WS   /realtime?baseId=…&since=…       live actions
 - **Form:** fill-in form that creates a record, with a field picker in edit mode.
 - **Automations panel:** list, toggle, edit trigger and steps, recent runs.
 
-## 6. Tech [ours]
+## 6. Tech [mine]
 Next.js (App Router, TypeScript) served by a custom Node server that also runs
 the WebSocket endpoint (`ws`). Postgres through `pg` when `DATABASE_URL` is
 set, otherwise embedded PGlite in `.data/`, so it runs with zero setup.
@@ -165,14 +165,14 @@ automations and live sync. How FerTable compares:
 - Automation triggers (created / updated / matches conditions) and the
   update / create record steps line up with Airtable's basic set.
 
-**Different on purpose (keep ours)**
+**Different on purpose (keep mine)**
 - *Who computes.* Airtable computes lookups, rollups and formulas on the server and
   pushes the new cell values. FerTable derives them on both sides from stored
   cells, which keeps traffic small and lets edits show up instantly. Revisit only
   if very large bases make full recomputes slow.
 - *Removing a sort.* Airtable rewrites the view's manual order when a sort is
   applied, so rows stay sorted after the sort is removed. FerTable sorts when it
-  draws, so removing a sort brings back the manual order. Ours is less
+  draws, so removing a sort brings back the manual order. Mine is less
   surprising. A "keep this order" button could cover the other case.
 - *Empty values.* Airtable puts empties first when ascending; FerTable keeps
   them last in both directions.
