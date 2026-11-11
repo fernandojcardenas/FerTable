@@ -7,3 +7,17 @@ node_modules/
 .data/
 next-env.d.ts
 *.tsbuildinfo
+
+# Never commit secrets, keys, logs or database files.
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.har
+admin-token
