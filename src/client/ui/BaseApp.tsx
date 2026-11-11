@@ -23,6 +23,7 @@ import { InterfacesView } from "./InterfacesView";
 import { TimelineView } from "./TimelineView";
 import { ListView } from "./ListView";
 import { BaseMenu } from "./BaseMenu";
+import { BaseSwitcher } from "./BaseSwitcher";
 import { NotificationsBell } from "./Notifications";
 import { downloadViewCsv } from "./csvExport";
 import { duplicateTableActions } from "@/shared/duplicate";
@@ -221,7 +222,7 @@ function Header({ me, mode, setMode, onDeveloper, onAutomations, onShare, onTogg
     snap.status === "connecting" ? "Connecting…" : "Offline – changes will sync when back online";
   return (
     <header className="app-header">
-      <a href="/" className="btn ghost" aria-label="All bases">◧</a>
+      <BaseSwitcher currentId={snap.state.base.id} />
       <button className="btn ghost" onClick={onToggleSidebar} aria-label="Toggle views sidebar">☰</button>
       <input className="base-name" value={name} aria-label="Base name" size={Math.max(8, name.length)} readOnly={readOnly}
         onChange={(e) => setName(e.target.value)}
