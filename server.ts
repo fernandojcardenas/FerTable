@@ -25,6 +25,7 @@ import { createWebhook, deleteWebhook, enableWebhook, listWebhooks } from "./src
 import { sharedViewData, sharedViewHasFile } from "./src/shared/publicView";
 import { sharedPageData, sharedPageHasFile } from "./src/shared/publicPage";
 import { TEMPLATES } from "./src/shared/templates";
+import { baseOutline, mobileRecord, mobileViewRecords } from "./src/shared/mobile";
 import { audit } from "./src/server/audit";
 import { readAudit } from "./src/server/audit";
 import { listNotifications, markRead, notify } from "./src/server/notifications";
@@ -481,6 +482,25 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       if (data.length === 0) throw new ValidationError("The file is empty");
       const att = await engine.saveFile(baseId, url.searchParams.get("name") ?? "file", String(req.headers["content-type"] ?? ""), data);
       return send(res, 201, att);
+    }
+    // ---- for the iOS app: values worked out on the server ----
+    if (sub === "outline" && method === "GET") {
+      const role = await requireRole(user, baseId, "viewer");
+      const state = await engine.getState(baseId);
+      return state ? send(res, 200, baseOutline(state, user.id, role)) : send(res, 404, { error: "Base not found" });
+    }
+    if (sub === "views" && item && parts[5] === "records" && method === "GET") {
+      const role = await requireRole(user, baseId, "viewer");
+      const state = await engine.getState(baseId);
+      const view = state?.views[item];
+      if (!state || !view || (view.personalFor && view.personalFor !== user.id)) return send(res, 404, { error: "View not found" });
+      return send(res, 200, mobileViewRecords({ ...state, people: await engine.people(baseId) }, view, user.id, role, url.searchParams.get("q") ?? ""));
+    }
+    if (sub === "rows" && item && !parts[5] && method === "GET") {
+      const role = await requireRole(user, baseId, "viewer");
+      const state = await engine.getState(baseId);
+      const rec = state && mobileRecord({ ...state, people: await engine.people(baseId) }, item, user.id, role);
+      return rec ? send(res, 200, rec) : send(res, 404, { error: "That record doesn't exist" });
     }
     // ---- comments ----
     if (sub === "comment-counts" && method === "GET") {
