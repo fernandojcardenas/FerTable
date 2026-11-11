@@ -7,7 +7,10 @@ import { useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Aggregate, BaseState, ElementSource, Field, InterfacePage, PageElement } from "@/shared/types";
 import { Computer } from "@/shared/compute";
-import { aggregate, chartData, formatTotal, mapPoints, newElement, sourceRows, type ChartPoint } from "@/shared/interfaces";
+import { aggregate, chartData, controlChoices, formatTotal, mapPoints, narrowBy, newElement, sourceRows, type ChartPoint, type Narrow } from "@/shared/interfaces";
+import { newPublicToken } from "@/shared/publicForm";
+import { RecordPageView } from "./RecordPage";
+import { PrintPageView } from "./PrintLayout";
 import { newId } from "@/shared/ids";
 import { Dialog, Popover, useBase } from "./common";
 import { Chart, ChartTable } from "./charts";
@@ -28,14 +31,32 @@ export function InterfacesView({ onOpenView, sidebar = true, onPicked }: { onOpe
   const [editing, setEditing] = useState(false);
   const canEdit = snap.role === "owner" || snap.role === "editor";
 
-  const addPage = () => {
+  const [newMenu, setNewMenu] = useState(false);
+  const addPage = (kind: "dashboard" | "record" | "print" = "dashboard") => {
+    setNewMenu(false);
     const taken = new Set(pages.map((p) => p.name.toLowerCase()));
-    let name = "Dashboard";
-    for (let i = 2; taken.has(name.toLowerCase()); i++) name = `Dashboard ${i}`;
+    const label = kind === "record" ? "Record review" : kind === "print" ? "Print layout" : "Dashboard";
+    let name = label;
+    for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${label} ${i}`;
     const blank: InterfacePage = { id: newId("pag"), name, elements: [] };
-    // Each starter element is placed after the ones before it.
-    if (state.tableOrder.length) for (const kind of ["number", "chart", "list"] as const) blank.elements.push(newElement(state, kind, blank));
-    if (client.dispatch({ type: "page.upsert", page: blank })) { setPageId(blank.id); setEditing(true); }
+    const t = state.tables[state.tableOrder[0]];
+    if (kind === "dashboard") {
+      // Each starter element is placed after the ones before it.
+      if (state.tableOrder.length) for (const k of ["number", "chart", "list"] as const) blank.elements.push(newElement(state, k, blank));
+    } else if (t) {
+      blank.kind = kind;
+      blank.tableId = t.id;
+      blank.viewId = null;
+      if (kind === "record") blank.fieldIds = t.fieldOrder.slice(0, 12);
+      else {
+        blank.paper = "a4";
+        blank.items = [
+          { id: newId("prt"), kind: "field", fieldId: t.primaryFieldId, x: 20, y: 20, w: 170, h: 14, size: 20, bold: true, label: false, align: "left" },
+          ...t.fieldOrder.slice(1, 7).map((fid, i) => ({ id: newId("prt"), kind: "field" as const, fieldId: fid, x: 20, y: 44 + i * 16, w: 170, h: 12, size: 11, bold: false, label: true, align: "left" as const })),
+        ];
+      }
+    } else return;
+    if (client.dispatch({ type: "page.upsert", page: blank })) { setPageId(blank.id); setEditing(kind !== "record"); }
   };
 
   return (
@@ -44,10 +65,20 @@ export function InterfacesView({ onOpenView, sidebar = true, onPicked }: { onOpe
         <div className="stack" style={{ gap: 2 }}>
           <span className="muted small" style={{ padding: "0 8px 4px" }}>Pages</span>
           {pages.map((p) => (
-            <button key={p.id} className={`view-item ${page?.id === p.id ? "active" : ""}`} onClick={() => { setPageId(p.id); onPicked?.(); }}>▦ {p.name}</button>
+            <button key={p.id} className={`view-item ${page?.id === p.id ? "active" : ""}`} onClick={() => { setPageId(p.id); onPicked?.(); }}>
+              {p.kind === "record" ? "▤" : p.kind === "print" ? "🖨" : "▦"} {p.name}{p.shareToken ? " 🌐" : ""}
+            </button>
           ))}
           {pages.length === 0 && <span className="muted small" style={{ padding: "0 8px" }}>No pages yet.</span>}
-          {canEdit && <button className="view-item" onClick={addPage}>＋ New page</button>}
+          {canEdit && (
+            <Popover open={newMenu} onClose={() => setNewMenu(false)} anchor={<button className="view-item" onClick={() => setNewMenu(!newMenu)}>＋ New page</button>}>
+              <div className="menu">
+                <button onClick={() => addPage("dashboard")}>▦ Dashboard <span className="muted small">numbers, charts, lists, maps</span></button>
+                <button disabled={!state.tableOrder.length} onClick={() => addPage("record")}>▤ Record review <span className="muted small">pick a record, see its details</span></button>
+                <button disabled={!state.tableOrder.length} onClick={() => addPage("print")}>🖨 Print layout <span className="muted small">invoices, labels, one-pagers</span></button>
+              </div>
+            </Popover>
+          )}
         </div>
       </aside>
       <section className="main">
@@ -55,8 +86,12 @@ export function InterfacesView({ onOpenView, sidebar = true, onPicked }: { onOpe
           <div className="interface-empty">
             <h2>Interfaces</h2>
             <p className="muted">Build dashboards from your data: totals, charts, record lists, maps, text and buttons. Everyone in the base can view them.</p>
-            {canEdit && <button className="btn primary" onClick={addPage}>Create a page</button>}
+            {canEdit && <button className="btn primary" onClick={() => addPage()}>Create a page</button>}
           </div>
+        ) : page.kind === "record" ? (
+          <RecordPageView key={page.id} page={page} editing={editing && canEdit} setEditing={setEditing} canEdit={canEdit} onDeleted={() => { setPageId(null); setEditing(false); }} />
+        ) : page.kind === "print" ? (
+          <PrintPageView key={page.id} page={page} editing={editing && canEdit} setEditing={setEditing} canEdit={canEdit} onDeleted={() => { setPageId(null); setEditing(false); }} />
         ) : (
           <PageView key={page.id} page={page} editing={editing && canEdit} setEditing={setEditing} canEdit={canEdit} onOpenView={onOpenView}
             onDeleted={() => { setPageId(null); setEditing(false); }} />
@@ -74,8 +109,13 @@ function PageView({ page, editing, setEditing, canEdit, onDeleted, onOpenView }:
   const [selected, setSelected] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ id: string; x: number; y: number; w: number; h: number } | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>({});
   const canvas = useRef<HTMLDivElement>(null);
   const computer = useMemo(() => new Computer(state), [state]);
+  const controls = page.controls ?? [];
+  const narrow = useMemo(() => narrowBy(computer, state, controls, values), [computer, state, controls, values]);
   const save = (next: InterfacePage) => client.dispatch({ type: "page.upsert", page: next });
   const update = (el: PageElement) => save({ ...page, elements: page.elements.map((e) => (e.id === el.id ? el : e)) });
   const sel = page.elements.find((e) => e.id === selected);
@@ -131,9 +171,38 @@ function PageView({ page, editing, setEditing, canEdit, onDeleted, onOpenView }:
             </div>
           </Popover>
         )}
+        {editing && (
+          <Popover open={filtersOpen} onClose={() => setFiltersOpen(false)} align="right" anchor={<button className="btn" onClick={() => setFiltersOpen(!filtersOpen)}>⏚ Viewer filters{controls.length ? ` (${controls.length})` : ""}</button>}>
+            <ControlsEditor page={page} onSave={save} />
+          </Popover>
+        )}
         {editing && <button className="btn ghost danger" onClick={() => { if (confirm(`Delete the page "${page.name}"?`) && client.dispatch({ type: "page.delete", pageId: page.id })) onDeleted(); }}>Delete page</button>}
+        {canEdit && !editing && <button className="btn ghost" onClick={() => setPublishing(true)}>🌐 {page.shareToken ? "Published" : "Publish"}</button>}
         {canEdit && <button className={`btn ${editing ? "primary" : ""}`} onClick={() => { setEditing(!editing); setSelected(null); }}>{editing ? "Done" : "✎ Edit page"}</button>}
       </div>
+      {publishing && <PublishDialog page={page} onClose={() => setPublishing(false)} />}
+      {controls.length > 0 && (
+        <div className="page-controls">
+          {controls.map((ctl) => {
+            const f = state.fields[ctl.fieldId];
+            if (!f) return null;
+            const choices = controlChoices(computer, state, ctl);
+            return (
+              <label key={ctl.id} className="row small">{f.name}
+                {choices ? (
+                  <select className="select" style={{ width: 160 }} value={values[ctl.id] ?? ""} onChange={(e) => setValues({ ...values, [ctl.id]: e.target.value })}>
+                    <option value="">Any</option>
+                    {choices.map((ch) => <option key={ch.value} value={ch.value}>{ch.label}</option>)}
+                  </select>
+                ) : (
+                  <input className="input" style={{ width: 160 }} placeholder="Contains…" value={values[ctl.id] ?? ""} onChange={(e) => setValues({ ...values, [ctl.id]: e.target.value })} />
+                )}
+              </label>
+            );
+          })}
+          {Object.values(values).some(Boolean) && <button className="btn ghost small" onClick={() => setValues({})}>Clear</button>}
+        </div>
+      )}
       <div className="page-body">
         <div className="page-scroll" onPointerDown={() => editing && setSelected(null)}>
           {page.elements.length === 0 && (
@@ -147,7 +216,7 @@ function PageView({ page, editing, setEditing, canEdit, onDeleted, onOpenView }:
                   style={{ gridColumn: `${box.x + 1} / span ${box.w}`, gridRow: `${box.y + 1} / span ${box.h}`, ["--h" as string]: `${box.h * ROW_H + (box.h - 1) * GAP}px` }}
                   onPointerDown={(e) => { if (editing) { e.stopPropagation(); setSelected(el.id); } }}>
                   {editing && <div className="el-handle" onPointerDown={(e) => startDrag(e, el, "move")} title="Drag to move">⋮⋮ {el.title || KIND_LABEL[el.kind]}</div>}
-                  <ElementView el={el} state={state} c={computer} onOpenView={onOpenView} />
+                  <ElementView el={el} state={state} c={computer} onOpenView={onOpenView} narrow={narrow} />
                   {editing && <div className="el-resize" onPointerDown={(e) => startDrag(e, el, "size")} title="Drag to resize" />}
                 </div>
               );
@@ -166,7 +235,7 @@ function PageView({ page, editing, setEditing, canEdit, onDeleted, onOpenView }:
 
 // ---- elements ----
 
-function ElementView({ el, state, c, onOpenView }: { el: PageElement; state: BaseState; c: Computer; onOpenView: (viewId: string) => void }) {
+function ElementView({ el, state, c, onOpenView, narrow }: { el: PageElement; state: BaseState; c: Computer; onOpenView: (viewId: string) => void; narrow?: Narrow }) {
   const { openRecord, snap } = useBase();
   const [asTable, setAsTable] = useState(false);
   const [picked, setPicked] = useState<ChartPoint | null>(null);
@@ -177,7 +246,7 @@ function ElementView({ el, state, c, onOpenView }: { el: PageElement; state: Bas
   switch (el.kind) {
     case "number": {
       const field = el.fieldId ? state.fields[el.fieldId] : undefined;
-      const rows = sourceRows(c, state, el.source);
+      const rows = sourceRows(c, state, el.source, narrow);
       const v = aggregate(c, rows, field, el.fn);
       return (
         <div className="el-body number-tile">
@@ -188,7 +257,7 @@ function ElementView({ el, state, c, onOpenView }: { el: PageElement; state: Bas
       );
     }
     case "chart": {
-      const data = chartData(c, state, el);
+      const data = chartData(c, state, el, narrow);
       const field = el.fieldId ? state.fields[el.fieldId] : undefined;
       const fmt = (n: number) => formatTotal(n, field, el.fn);
       const valueLabel = el.fn === "count" ? "Records" : `${FN_LABEL[el.fn]} of ${field?.name ?? "?"}`;
@@ -206,7 +275,7 @@ function ElementView({ el, state, c, onOpenView }: { el: PageElement; state: Bas
       );
     }
     case "list": {
-      const rows = sourceRows(c, state, el.source).slice(0, el.limit);
+      const rows = sourceRows(c, state, el.source, narrow).slice(0, el.limit);
       const fields = el.fieldIds.map((id) => state.fields[id]).filter(Boolean) as Field[];
       return (
         <div className="el-body">
@@ -226,7 +295,7 @@ function ElementView({ el, state, c, onOpenView }: { el: PageElement; state: Bas
       );
     }
     case "map": {
-      const { points, skipped } = mapPoints(c, state, el);
+      const { points, skipped } = mapPoints(c, state, el, narrow);
       return (
         <div className="el-body">
           <div className="el-title-row"><strong className="small">{el.title || "Map"}</strong><span className="muted small">{points.length} place{points.length === 1 ? "" : "s"}{skipped ? ` · ${skipped} without a readable location` : ""}</span></div>
@@ -405,5 +474,63 @@ function ElementSettings({ el, onChange, onClose, onDelete, onDuplicate }: { el:
       </div>
       <p className="muted small" style={{ margin: 0 }}>Drag an element's top bar to move it and its bottom-right corner to resize.</p>
     </aside>
+  );
+}
+
+/** Filters people viewing the page can change; each narrows the elements that read its table. */
+function ControlsEditor({ page, onSave }: { page: InterfacePage; onSave: (p: InterfacePage) => boolean }) {
+  const { snap } = useBase();
+  const state = snap.state;
+  const controls = page.controls ?? [];
+  const [tableId, setTableId] = useState(state.tableOrder[0] ?? "");
+  const fields = (state.tables[tableId]?.fieldOrder ?? []).map((id) => state.fields[id]).filter((f) => f && !["attachment", "button"].includes(f.type));
+  const [fieldId, setFieldId] = useState("");
+  return (
+    <div className="stack" style={{ gap: 8, minWidth: 340 }}>
+      <span className="muted small">Viewers pick a value to narrow every element that shows records from that table.</span>
+      {controls.map((ctl) => (
+        <div key={ctl.id} className="row small">
+          <span>{state.tables[ctl.tableId]?.name} · <b>{state.fields[ctl.fieldId]?.name ?? "?"}</b></span>
+          <span className="spacer" />
+          <button className="btn ghost small" onClick={() => onSave({ ...page, controls: controls.filter((x) => x.id !== ctl.id) })} aria-label="Remove filter">✕</button>
+        </div>
+      ))}
+      <div className="row">
+        <select className="select" value={tableId} onChange={(e) => { setTableId(e.target.value); setFieldId(""); }} aria-label="Table">
+          {state.tableOrder.map((id) => <option key={id} value={id}>{state.tables[id].name}</option>)}
+        </select>
+        <select className="select" value={fieldId} onChange={(e) => setFieldId(e.target.value)} aria-label="Field">
+          <option value="">Field…</option>
+          {fields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+        </select>
+        <button className="btn" disabled={!fieldId || controls.length >= 8} onClick={() => { if (onSave({ ...page, controls: [...controls, { id: newId("ctl"), tableId, fieldId }] })) setFieldId(""); }}>Add</button>
+      </div>
+    </div>
+  );
+}
+
+/** Publish a page with a read-only public link. */
+export function PublishDialog({ page, onClose }: { page: InterfacePage; onClose: () => void }) {
+  const { client } = useBase();
+  const [copied, setCopied] = useState(false);
+  const url = page.shareToken ? `${location.origin}/i/${page.shareToken}` : "";
+  const set = (shareToken: string | null) => client.dispatch({ type: "page.upsert", page: { ...page, shareToken } });
+  return (
+    <Dialog title={`Publish “${page.name}”`} onClose={onClose} footer={<><span className="spacer" /><button className="btn primary" onClick={onClose}>Done</button></>}>
+      <p className="muted" style={{ marginTop: 0 }}>Anyone with the link can see this page without an account, including people who aren&apos;t members of the base. They see what the page shows and nothing else; buttons that run automations are hidden.</p>
+      {page.shareToken ? (
+        <div className="stack" style={{ gap: 8 }}>
+          <div className="row">
+            <input className="input" readOnly value={url} onFocus={(e) => e.target.select()} aria-label="Public link" />
+            <button className="btn" onClick={() => { void navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? "Copied" : "Copy"}</button>
+          </div>
+          <div className="row">
+            <a className="btn ghost small" href={url} target="_blank" rel="noreferrer">Open ↗</a>
+            <button className="btn ghost small" onClick={() => confirm("Make a new link? The current one will stop working.") && set(newPublicToken())}>New link</button>
+            <button className="btn ghost small danger" onClick={() => set(null)}>Unpublish</button>
+          </div>
+        </div>
+      ) : <button className="btn primary" onClick={() => set(newPublicToken())}>Publish with a link</button>}
+    </Dialog>
   );
 }

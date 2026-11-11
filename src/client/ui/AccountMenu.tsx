@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Dialog, Popover } from "./common";
 
-export type Me = { id: string; email: string; name: string; verified?: boolean };
+export type Me = { id: string; email: string; name: string; verified?: boolean; admin?: boolean };
 
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/);

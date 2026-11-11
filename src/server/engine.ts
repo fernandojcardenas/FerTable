@@ -2,24 +2,30 @@
 // per-base lock, saves what changed to Postgres, logs the transaction and
 // broadcasts it to every connected client. Then it runs automations.
 
-import type { Action, ActionBatch, Attachment, Automation, AutomationStep, BaseState, CellValue, Field, People, Role, Row, ServerMessage, View } from "../shared/types";
+import type { Action, ActionBatch, Attachment, Automation, AutomationStep, BaseState, CellValue, Field, InterfacePage, People, Role, Row, ServerMessage, View } from "../shared/types";
 import { applyActions, emptyBase, ValidationError } from "../shared/reducer";
 import { Computer, CellError } from "../shared/compute";
 import { matchesFilters, viewRows } from "../shared/query";
 import { emailStep, fillTemplate, lastScheduledTime, linkedRecords, MAX_LOOP_ITEMS, postPayload, recordStepActions, templateRefs, type RunContext } from "../shared/automation";
-import { connectionUrl, safePost } from "./connections";
+import { connectionUrl, safeGet, safePost } from "./connections";
 import { runScript } from "./script";
 import { isComputed } from "../shared/fieldTypes";
 import { generateCell, type AiResult } from "./ai";
 import { checkSubmission, PUBLIC_TOKEN_RE } from "../shared/publicForm";
 import { oneLine, sendMail } from "./mail";
 import { starterTableActions } from "../shared/starter";
+import { templateActions } from "../shared/templates";
+import { copyBaseState } from "../shared/duplicate";
 import { rowHistory, type DeletedSnapshot } from "../shared/activity";
 import { newId } from "../shared/ids";
 import { getDb, type Queryable } from "./db";
 import { deliverWebhooks } from "./webhooks";
 import { buildSync, sourceLabel } from "../shared/sync";
+import { csvSourceState, csvUrlFor } from "../shared/urlSync";
 import { roleFor } from "./auth";
+import { permissionProblem } from "../shared/permissions";
+import { inversePatch } from "../shared/history";
+import { notify, onNotify } from "./notifications";
 
 type Listener = (msg: ServerMessage) => void;
 
@@ -58,10 +64,10 @@ export class Engine {
   }
 
   /** Bases this user can open, with their role in each. */
-  async listBases(userId: string): Promise<{ id: string; name: string; txn: number; role: Role }[]> {
+  async listBases(userId: string): Promise<{ id: string; name: string; txn: number; role: Role; workspaceId: string | null }[]> {
     const db = await getDb();
-    const { rows } = await db.query<{ id: string; name: string; txn: number; role: Role }>(
-      "select b.id, b.name, b.txn, m.role from bases b join base_members m on m.base_id = b.id where m.user_id = $1 order by b.created_at",
+    const { rows } = await db.query<{ id: string; name: string; txn: number; role: Role; workspaceId: string | null }>(
+      "select b.id, b.name, b.txn, m.role, b.workspace_id as \"workspaceId\" from bases b join access m on m.base_id = b.id where m.user_id = $1 order by b.created_at",
       [userId],
     );
     return rows;
@@ -94,17 +100,48 @@ export class Engine {
     return state;
   }
 
-  async createBase(name: string, ownerId: string): Promise<string> {
+  async createBase(name: string, ownerId: string, templateId?: string | null, workspaceId?: string | null): Promise<string> {
     const db = await getDb();
     const id = newId("bas");
     const clean = name.trim().slice(0, 200) || "Untitled base";
+    const template = templateId ? templateActions(templateId) : null;
+    if (templateId && !template) throw new ValidationError("Unknown template");
     await db.tx(async (q) => {
       await q.query("insert into bases (id, name, txn) values ($1, $2, 0)", [id, clean]);
       await q.query("insert into base_meta (base_id, table_order) values ($1, '[]'::jsonb)", [id]);
       await q.query("insert into base_members (base_id, user_id, role) values ($1, $2, 'owner')", [id, ownerId]);
+      if (workspaceId) await q.query("update bases set workspace_id = $2 where id = $1", [id, workspaceId]);
     });
     this.states.delete(id);
-    await this.apply(id, { clientId: null, requestId: null, userId: ownerId, actions: starterTableActions("Table 1").actions });
+    await this.apply(id, { clientId: null, requestId: null, userId: ownerId, actions: template ?? starterTableActions("Table 1").actions });
+    return id;
+  }
+
+  /** Copy a base (structure, and records when asked) into a new base owned by this user. */
+  async duplicateBase(baseId: string, userId: string, name: string, withRecords: boolean): Promise<string> {
+    const state = await this.getState(baseId);
+    if (!state) throw new ValidationError("Base not found");
+    const db = await getDb();
+    const id = newId("bas");
+    const clean = name.trim().slice(0, 200) || `${state.base.name} copy`;
+    // Saved connections (Slack, Sheets, webhooks) come along, with new ids.
+    const { rows: conns } = await db.query<{ id: string }>("select id from automation_connections where base_id = $1", [baseId]);
+    const connMap = new Map(conns.map((c) => [c.id, newId("cnx")]));
+    const { state: copy, files } = copyBaseState(state, id, clean, withRecords, connMap);
+    const { rows: ws } = await db.query<{ workspace_id: string | null }>("select workspace_id from bases where id = $1", [baseId]);
+    await db.tx(async (q) => {
+      await q.query("insert into bases (id, name, txn, workspace_id) values ($1, $2, 0, $3)", [id, clean, ws[0]?.workspace_id ?? null]);
+      await q.query("insert into base_meta (base_id, table_order) values ($1, $2::jsonb)", [id, JSON.stringify(copy.tableOrder)]);
+      await q.query("insert into base_members (base_id, user_id, role) values ($1, $2, 'owner')", [id, userId]);
+      for (const [oldId, newConn] of connMap) {
+        await q.query("insert into automation_connections (id, base_id, kind, name, url) select $1, $2, kind, name, url from automation_connections where id = $3", [newConn, id, oldId]);
+      }
+      for (const [oldId, newFile] of files) {
+        await q.query("insert into files (id, base_id, name, type, size, data) select $1, $2, name, type, size, data from files where id = $3 and base_id = $4", [newFile, id, oldId, baseId]);
+      }
+      await persistDiff(q, id, emptyBase(id, clean), copy);
+    });
+    this.states.delete(id);
     return id;
   }
 
@@ -127,7 +164,100 @@ export class Engine {
       this.runAutomations(baseId, result.before, result.after, result.batch).catch((e) => console.error("automation error", e));
     }
     if (!req.actions.every((a) => a.type === "ai.set")) this.scheduleAi(baseId, result.before, result.after);
+    if ((source === "client" || source === "api") && req.userId) {
+      this.notifyAssignments(baseId, result.before, result.after, req.userId).catch((e) => console.error("notification error", e));
+    }
     return result.batch;
+  }
+
+  /** Tell people when someone puts them in a user field. */
+  private async notifyAssignments(baseId: string, before: BaseState, after: BaseState, actorId: string) {
+    if (before.rows === after.rows) return;
+    const userFields = Object.values(after.fields).filter((f) => f.type === "user");
+    if (!userFields.length) return;
+    const sent = new Set<string>();
+    let actor: string | null = null;
+    const c = new Computer(after);
+    for (const [rowId, row] of Object.entries(after.rows)) {
+      const was = before.rows[rowId];
+      if (was === row) continue;
+      for (const f of userFields) {
+        if (f.tableId !== row.tableId) continue;
+        const now = (row.cells[f.id] as string[] | undefined) ?? [];
+        const prev = new Set((was?.cells[f.id] as string[] | undefined) ?? []);
+        for (const uid of now) {
+          if (prev.has(uid) || uid === actorId || sent.has(`${uid}:${rowId}`) || sent.size > 50) continue;
+          sent.add(`${uid}:${rowId}`);
+          actor ??= after.people?.[actorId]?.name ?? (await this.people(baseId))[actorId]?.name ?? "Someone";
+          await notify(uid, { baseId, kind: "assigned", title: `${actor} added you to “${c.primaryName(rowId)}”`, body: `${after.tables[row.tableId]?.name ?? ""} · ${f.name} · ${after.base.name}`, link: `/base/${baseId}?record=${rowId}` });
+        }
+      }
+    }
+  }
+
+  /** Tell a person's open windows to refresh their notifications. */
+  notifyUser(userId: string) {
+    for (const set of this.listeners.values()) {
+      for (const [l, uid] of set) if (uid === userId) { try { l({ type: "notification" }); } catch { /* closed */ } }
+    }
+  }
+
+  // ---- snapshots ----
+
+  /** Save the whole base as it is now. */
+  async createSnapshot(baseId: string, userId: string | null, nameIn: unknown, auto = false): Promise<{ id: string }> {
+    const state = await this.getState(baseId);
+    if (!state) throw new ValidationError("Base not found");
+    const { people: _p, ...data } = state;
+    const db = await getDb();
+    const id = newId("snp");
+    const name = String(nameIn ?? "").trim().slice(0, 200) || (auto ? "Automatic snapshot" : `Snapshot ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`);
+    await db.query("insert into base_snapshots (id, base_id, name, auto, txn, created_by, data) values ($1, $2, $3, $4, $5, $6, $7::jsonb)",
+      [id, baseId, name, auto, state.base.txn, userId, JSON.stringify(data)]);
+    if (auto) {
+      // Keep the newest 14 automatic snapshots.
+      await db.query(`delete from base_snapshots where base_id = $1 and auto and id not in
+        (select id from base_snapshots where base_id = $1 and auto order by created_at desc limit 14)`, [baseId]);
+    }
+    return { id };
+  }
+
+  async listSnapshots(baseId: string) {
+    const db = await getDb();
+    const { rows } = await db.query<{ id: string; name: string; auto: boolean; txn: number; created_at: Date | string; who: string | null; records: number }>(
+      `select s.id, s.name, s.auto, s.txn, s.created_at, u.name as who, (select count(*)::int from jsonb_object_keys(s.data->'rows')) as records
+       from base_snapshots s left join users u on u.id = s.created_by where s.base_id = $1 order by s.created_at desc limit 100`, [baseId]);
+    return rows.map((r) => ({ id: r.id, name: r.name, auto: r.auto, txn: r.txn, createdAt: new Date(r.created_at).toISOString(), createdBy: r.who, records: r.records }));
+  }
+
+  async deleteSnapshot(baseId: string, id: string) {
+    const db = await getDb();
+    await db.query("delete from base_snapshots where base_id = $1 and id = $2", [baseId, id]);
+  }
+
+  /** Put the base back the way a snapshot has it. A snapshot of how it is now is saved first. */
+  async restoreSnapshot(baseId: string, id: string, userId: string): Promise<void> {
+    const db = await getDb();
+    const { rows } = await db.query<{ name: string; data: BaseState }>("select name, data from base_snapshots where base_id = $1 and id = $2", [baseId, id]);
+    if (!rows[0]) throw new ValidationError("Snapshot not found");
+    await this.createSnapshot(baseId, userId, `Before restoring “${rows[0].name}”`);
+    const current = await this.getState(baseId);
+    if (!current) throw new ValidationError("Base not found");
+    const saved: BaseState = { ...rows[0].data, pages: rows[0].data.pages ?? {}, base: { ...current.base, name: rows[0].data.base.name } };
+    const patch = inversePatch(saved, current);
+    if (!Object.keys(patch).length) return;
+    await this.apply(baseId, { clientId: null, requestId: null, userId, actor: "Snapshot restore", actions: [{ type: "restore", patch }] }, "sync");
+  }
+
+  /** Once a day, save bases that changed since their last snapshot. */
+  async autoSnapshots(): Promise<number> {
+    const db = await getDb();
+    const { rows } = await db.query<{ id: string }>(
+      `select b.id from bases b where b.txn > 0 and not exists (
+         select 1 from base_snapshots s where s.base_id = b.id and (s.txn >= b.txn or (s.auto and s.created_at > now() - interval '24 hours')))
+       limit 50`);
+    for (const r of rows) await this.createSnapshot(r.id, null, null, true).catch((e) => console.error("snapshot failed", e));
+    return rows.length;
   }
 
   // ---- AI fields ----
@@ -220,6 +350,13 @@ export class Engine {
       if (req.actions.some((a) => a.type === "sync.apply" || (a.type === "table.create" && a.sync))) throw new ValidationError("Synced tables are set up and filled in by the server");
     }
     await this.checkPeople(baseId, before, req.actions);
+    // Field, table and locked-view limits apply to every change a person makes.
+    if ((source === "client" || source === "api") && req.userId) {
+      const role = await roleFor(req.userId, baseId);
+      if (!role) throw new ValidationError("You don't have access to this base");
+      const problem = permissionProblem(before, req.actions, req.userId, role);
+      if (problem) throw new ValidationError(problem);
+    }
 
     const at = new Date().toISOString();
     // The server decides creation times.
@@ -387,7 +524,7 @@ export class Engine {
     for (const a of actions) if (a.type === "row.create" || a.type === "row.update") collect(a.cells);
     if (!ids.size) return;
     const db = await getDb();
-    const { rows } = await db.query<{ user_id: string }>("select user_id from base_members where base_id = $1 and user_id = any($2::text[])", [baseId, [...ids]]);
+    const { rows } = await db.query<{ user_id: string }>("select user_id from access where base_id = $1 and user_id = any($2::text[])", [baseId, [...ids]]);
     if (rows.length !== ids.size) throw new ValidationError("A user field can only name people in this base");
   }
 
@@ -395,7 +532,7 @@ export class Engine {
   async people(baseId: string): Promise<People> {
     const db = await getDb();
     const { rows } = await db.query<{ id: string; name: string; email: string }>(
-      "select u.id, u.name, u.email from base_members m join users u on u.id = m.user_id where m.base_id = $1", [baseId],
+      "select u.id, u.name, u.email from access m join users u on u.id = m.user_id where m.base_id = $1", [baseId],
     );
     return Object.fromEntries(rows.map((r) => [r.id, { name: r.name, email: r.email }]));
   }
@@ -413,6 +550,32 @@ export class Engine {
     // Check the live copy too: the link may have been turned off a moment ago.
     if (!state || !view || view.type !== "form" || view.config.form?.publicToken !== token) return null;
     return { baseId: rows[0].base_id, state, view };
+  }
+
+  /** A view shared with a read-only public link. */
+  async findSharedView(token: string): Promise<{ baseId: string; state: BaseState; view: View } | null> {
+    if (!PUBLIC_TOKEN_RE.test(token)) return null;
+    const db = await getDb();
+    const { rows } = await db.query<{ id: string; base_id: string }>(
+      "select id, base_id from views where data->'config'->>'shareToken' = $1 limit 1", [token],
+    );
+    if (!rows[0]) return null;
+    const state = await this.getState(rows[0].base_id);
+    const view = state?.views[rows[0].id];
+    if (!state || !view || view.config.shareToken !== token || view.personalFor) return null;
+    return { baseId: rows[0].base_id, state, view };
+  }
+
+  /** An interface page published with a read-only public link. */
+  async findSharedPage(token: string): Promise<{ baseId: string; state: BaseState; page: InterfacePage } | null> {
+    if (!PUBLIC_TOKEN_RE.test(token)) return null;
+    const db = await getDb();
+    const { rows } = await db.query<{ id: string; base_id: string }>("select id, base_id from pages where data->>'shareToken' = $1 limit 1", [token]);
+    if (!rows[0]) return null;
+    const state = await this.getState(rows[0].base_id);
+    const page = state?.pages[rows[0].id];
+    if (!state || !page || page.shareToken !== token) return null;
+    return { baseId: rows[0].base_id, state, page };
   }
 
   /** Save a public form response as a new record (history shows the form as the author). */
@@ -689,6 +852,37 @@ export class Engine {
     return tableId;
   }
 
+  /** A table that copies a CSV file on the web or a Google Sheet (refreshed every 15 minutes). */
+  async createUrlSyncedTable(targetBaseId: string, userId: string, rawUrl: unknown, nameIn: unknown): Promise<string> {
+    let link: { url: string; label: string };
+    try { link = csvUrlFor(String(rawUrl ?? "")); } catch (e) { throw new ValidationError(e instanceof Error ? e.message : String(e)); }
+    // Read it once now, so a wrong link is reported straight away.
+    await this.readCsvSource(link.url, link.label);
+    const target = await this.getState(targetBaseId);
+    if (!target) throw new ValidationError("Base not found");
+    const base = String(nameIn ?? "").trim().slice(0, 100) || link.label.split("/")[0] || "Synced data";
+    let name = base;
+    for (let n = 2; Object.values(target.tables).some((t) => t.name.toLowerCase() === name.toLowerCase()); n++) name = `${base} (${n})`;
+    const tableId = newId("tbl");
+    const db = await getDb();
+    await db.query("insert into external_syncs (table_id, base_id, url) values ($1, $2, $3) on conflict (table_id) do update set url = excluded.url", [tableId, targetBaseId, link.url]);
+    await this.apply(targetBaseId, {
+      clientId: null, requestId: null, userId, actor: "Sync",
+      actions: [{ type: "table.create", tableId, name, primaryFieldId: newId("fld"), viewId: newId("viw"),
+        sync: { kind: "url", sourceBaseId: "url", sourceTableId: "url", sourceViewId: "url", sourceLabel: link.label, createdBy: userId, lastSyncAt: null, error: null } }],
+    }, "sync");
+    await this.runSync(targetBaseId, tableId);
+    return tableId;
+  }
+
+  private async readCsvSource(url: string, label: string) {
+    let res;
+    try { res = await safeGet(url); } catch (e) { throw new ValidationError(`Couldn't read the file: ${e instanceof Error ? e.message : String(e)}`); }
+    if (res.status === 401 || res.status === 403 || res.status === 404) throw new ValidationError(`The file couldn't be opened (${res.status}). For Google Sheets, share the sheet so anyone with the link can view it.`);
+    if (res.status >= 400) throw new ValidationError(`The file couldn't be read (error ${res.status})`);
+    try { return csvSourceState(res.text, label); } catch (e) { throw new ValidationError(e instanceof Error ? e.message : String(e)); }
+  }
+
   /** Bring one synced table up to date (one run at a time per table; a request during a run runs once more after). */
   runSync(targetBaseId: string, tableId: string): Promise<void> {
     const key = `${targetBaseId}:${tableId}`;
@@ -704,6 +898,7 @@ export class Engine {
     const t = target?.tables[tableId];
     if (!target || !t?.sync) return;
     const cfg = t.sync;
+    if (cfg.kind === "url") return this.syncUrlOnce(targetBaseId, tableId);
     let error: string | null = null;
     const role = await roleFor(cfg.createdBy, cfg.sourceBaseId);
     const raw = role ? await this.getState(cfg.sourceBaseId) : null;
@@ -728,6 +923,27 @@ export class Engine {
       await this.apply(targetBaseId, { clientId: null, requestId: null, actor: "Sync",
         actions: [{ type: "sync.apply", tableId, fields: [], removeFieldIds: [], upserts: [], deleteRowIds: [], sourceLabel: cfg.sourceLabel, error: `Couldn't sync: ${msg}` }] }, "sync").catch(() => {});
     }
+  }
+
+  private async syncUrlOnce(targetBaseId: string, tableId: string) {
+    const target = await this.getState(targetBaseId);
+    const t = target?.tables[tableId];
+    if (!target || !t?.sync) return;
+    const db = await getDb();
+    const { rows } = await db.query<{ url: string }>("select url from external_syncs where table_id = $1 and base_id = $2", [tableId, targetBaseId]);
+    let action: Action | null;
+    try {
+      if (!rows[0]) throw new ValidationError("The sync's link is missing; set the sync up again");
+      const { state, view } = await this.readCsvSource(rows[0].url, t.sync.sourceLabel);
+      // The label stays the link's, not the stand-in base's.
+      action = buildSync(state, view, target, t, new Date(), t.sync.sourceLabel);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      if (t.sync.error === error) return;
+      action = { type: "sync.apply", tableId, fields: [], removeFieldIds: [], upserts: [], deleteRowIds: [], sourceLabel: t.sync.sourceLabel, error };
+    }
+    if (!action) return;
+    await this.apply(targetBaseId, { clientId: null, requestId: null, actions: [action], actor: "Sync" }, "sync").catch((e) => console.error("url sync failed", e));
   }
 
   /** After a change to a base, refresh the tables that sync from it (batched over a couple of seconds). */
@@ -778,6 +994,8 @@ export class Engine {
     setTimeout(() => void this.runSchedules().catch((e) => console.error("schedule error", e)), 5_000);
     // Synced tables also refresh every 15 minutes, which catches lost access and missed changes.
     setInterval(() => void this.syncTablesFrom(null).catch((e) => console.error("sync error", e)), 15 * 60_000).unref?.();
+    // Automatic daily snapshots (checked every hour).
+    setInterval(() => void this.autoSnapshots().catch((e) => console.error("snapshot error", e)), 60 * 60_000).unref?.();
   }
 
   /** Run schedules that came due since their last run. A new schedule waits for its first due time. */
@@ -882,7 +1100,12 @@ async function persistDiff(q: Queryable, baseId: string, before: BaseState, afte
 // One engine per process, shared through globalThis.
 const g = globalThis as { __gridbaseEngine?: Engine };
 export function getEngine(): Engine {
-  return (g.__gridbaseEngine ??= new Engine());
+  if (!g.__gridbaseEngine) {
+    const e = new Engine();
+    onNotify((userId) => e.notifyUser(userId));
+    g.__gridbaseEngine = e;
+  }
+  return g.__gridbaseEngine;
 }
 
 export { ValidationError };

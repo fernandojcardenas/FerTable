@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { Field, Filters, SortSpec, View, ViewConfig } from "@/shared/types";
+import type { Field, Filters, RecordColoring, RowHeight, SortSpec, View, ViewConfig } from "@/shared/types";
+import { CHOICE_COLORS } from "@/shared/fieldTypes";
+import { MAX_FROZEN, ROW_HEIGHT_LABELS } from "@/shared/viewTools";
+import { canAddRecords } from "./permissions";
 import { filterKind, OPERATORS } from "@/shared/query";
 import { FIELD_TYPES } from "@/shared/fieldTypes";
 import { newId } from "@/shared/ids";
@@ -115,10 +118,78 @@ function SortList({ fields, specs, onChange, noun }: { fields: Field[]; specs: S
   );
 }
 
+/** Search box for the open view (Cmd/Ctrl+F). */
+function SearchBox() {
+  const { search, setSearch } = useBase();
+  const [open, setOpen] = useState(false);
+  if (!open && !search) {
+    return <button className="btn ghost view-search-btn" onClick={() => setOpen(true)} aria-label="Search this view" title="Search (⌘F)">🔍</button>;
+  }
+  return (
+    <span className="view-search">
+      <input className="input" autoFocus placeholder="Find in view" value={search} aria-label="Find in view"
+        onChange={(e) => setSearch(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") { setSearch(""); setOpen(false); } }}
+        onBlur={() => { if (!search) setOpen(false); }} />
+      <button className="btn ghost small" onClick={() => { setSearch(""); setOpen(false); }} aria-label="Close search">✕</button>
+    </span>
+  );
+}
+
+/** Color records by a single select field, or by rules. */
+function ColoringEditor({ fields, coloring, onChange }: { fields: Field[]; coloring: RecordColoring | null | undefined; onChange: (c: RecordColoring | null) => void }) {
+  const selects = fields.filter((f) => f.type === "singleSelect");
+  const mode = coloring?.mode ?? "none";
+  return (
+    <div className="stack" style={{ gap: 8, minWidth: 360 }}>
+      <label className="row small">Color records
+        <select className="select" value={mode} onChange={(e) => {
+          const m = e.target.value;
+          if (m === "none") onChange(null);
+          else if (m === "select") selects[0] ? onChange({ mode: "select", fieldId: selects[0].id }) : undefined;
+          else onChange({ mode: "conditions", rules: [] });
+        }}>
+          <option value="none">None</option>
+          <option value="select" disabled={!selects.length}>By a single select field</option>
+          <option value="conditions">By conditions</option>
+        </select>
+      </label>
+      {coloring?.mode === "select" && (
+        <label className="row small">Field
+          <select className="select" value={coloring.fieldId} onChange={(e) => onChange({ mode: "select", fieldId: e.target.value })}>
+            {selects.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </label>
+      )}
+      {coloring?.mode === "conditions" && (
+        <>
+          <span className="muted small">The first rule a record matches decides its color.</span>
+          {coloring.rules.map((r, i) => (
+            <div key={r.id} className="color-rule">
+              <div className="row">
+                <span className="row" style={{ gap: 2 }}>
+                  {CHOICE_COLORS.map((col) => (
+                    <button key={col} className={`swatch-btn s-${col} ${r.color === col ? "on" : ""}`} aria-label={col} title={col}
+                      onClick={() => onChange({ ...coloring, rules: coloring.rules.map((x, j) => (j === i ? { ...x, color: col } : x)) })} />
+                  ))}
+                </span>
+                <span className="spacer" />
+                <button className="btn ghost small" onClick={() => onChange({ ...coloring, rules: coloring.rules.filter((_, j) => j !== i) })} aria-label="Remove rule">✕</button>
+              </div>
+              <FilterEditor fields={fields} filters={r.filters} onChange={(filters) => onChange({ ...coloring, rules: coloring.rules.map((x, j) => (j === i ? { ...x, filters } : x)) })} />
+            </div>
+          ))}
+          <div><button className="btn" disabled={coloring.rules.length >= 20} onClick={() => onChange({ ...coloring, rules: [...coloring.rules, { id: newId("flt"), color: CHOICE_COLORS[coloring.rules.length % CHOICE_COLORS.length], filters: { conjunction: "and", conditions: [] } }] })}>+ Add color rule</button></div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => void }) {
-  const { snap } = useBase();
+  const { snap, client } = useBase();
   const update = useViewUpdate(view);
-  const [open, setOpen] = useState<null | "hide" | "filter" | "group" | "sort" | "settings">(null);
+  const [open, setOpen] = useState<null | "hide" | "filter" | "group" | "sort" | "settings" | "height" | "color">(null);
   const close = () => setOpen(null);
   const toggle = (k: typeof open) => setOpen((o) => (o === k ? null : k));
   const table = snap.state.tables[view.tableId];
@@ -127,8 +198,18 @@ export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => 
   const hiddenCount = c.hiddenFieldIds.length;
   const filterCount = c.filters.conditions.length;
 
+  const locked = Boolean(c.locked);
+  const tl = c.timeline ?? { startFieldId: null, endFieldId: null, scale: "week" as const, dependencyFieldId: null };
+  const dateFields = fields.filter((f) => f.type === "date" || f.type === "createdTime" || f.type === "lastModifiedTime");
   return (
     <div className="toolbar">
+      {locked && (
+        <button className="btn ghost lock-badge" title={snap.role === "owner" ? "Click to unlock this view" : "Only owners can unlock this view"}
+          onClick={() => { if (snap.role === "owner" && confirm("Unlock this view so editors can change its settings?")) client.dispatch({ type: "view.update", viewId: view.id, config: { locked: false } }); }}>
+          🔒 Locked
+        </button>
+      )}
+      {view.personalFor && <span className="role-badge" title="Only you see this view">Personal</span>}
       {view.type !== "form" && (
         <>
           <Popover open={open === "hide"} onClose={close} anchor={
@@ -153,14 +234,14 @@ export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => 
           }>
             <FilterEditor fields={fields} filters={c.filters} onChange={(filters) => update({ filters })} />
           </Popover>
-          {view.type === "grid" && (
+          {(view.type === "grid" || view.type === "timeline" || view.type === "list") && (
             <Popover open={open === "group"} onClose={close} anchor={
               <button className={`btn ghost ${c.groupBy.length ? "active" : ""}`} onClick={() => toggle("group")}>▤ {c.groupBy.length ? `Grouped by ${c.groupBy.length}` : "Group"}</button>
             }>
               <SortList fields={fields} specs={c.groupBy} noun="group" onChange={(groupBy) => update({ groupBy: groupBy.slice(0, 3) })} />
             </Popover>
           )}
-          {view.type !== "calendar" && (
+          {view.type !== "calendar" && view.type !== "timeline" && (
             <Popover open={open === "sort"} onClose={close} anchor={
               <button className={`btn ghost ${c.sorts.length ? "active" : ""}`} onClick={() => toggle("sort")}>⇅ {c.sorts.length ? `Sorted by ${c.sorts.length}` : "Sort"}</button>
             }>
@@ -168,6 +249,65 @@ export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => 
             </Popover>
           )}
         </>
+      )}
+      {view.type !== "form" && (
+        <Popover open={open === "color"} onClose={close} anchor={
+          <button className={`btn ghost ${c.colors ? "active" : ""}`} onClick={() => toggle("color")}>🎨 Color</button>
+        }>
+          <ColoringEditor fields={fields} coloring={c.colors} onChange={(colors) => update({ colors })} />
+        </Popover>
+      )}
+      {view.type === "grid" && (
+        <Popover open={open === "height"} onClose={close} anchor={
+          <button className="btn ghost" onClick={() => toggle("height")} aria-label="Row height and frozen columns">↕ Rows</button>
+        }>
+          <div className="stack" style={{ gap: 6, minWidth: 220 }}>
+            <span className="muted small">Row height</span>
+            {(Object.keys(ROW_HEIGHT_LABELS) as RowHeight[]).map((h) => (
+              <label key={h} className="row" style={{ cursor: "pointer" }}>
+                <input type="radio" name="row-height" checked={(c.rowHeight ?? "short") === h} onChange={() => update({ rowHeight: h })} /> {ROW_HEIGHT_LABELS[h]}
+              </label>
+            ))}
+            <label className="row small" style={{ marginTop: 8 }}>Frozen columns
+              <select className="select" style={{ width: 70 }} value={c.frozenCount ?? 1} onChange={(e) => update({ frozenCount: Number(e.target.value) })}>
+                {Array.from({ length: MAX_FROZEN }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          </div>
+        </Popover>
+      )}
+      {view.type === "timeline" && (
+        <>
+          <label className="row small">Start
+            <select className="select" style={{ width: 130 }} value={c.timeline?.startFieldId ?? ""} onChange={(e) => update({ timeline: { ...tl, startFieldId: e.target.value || null } })}>
+              <option value="">Choose…</option>
+              {dateFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </label>
+          <label className="row small">End
+            <select className="select" style={{ width: 130 }} value={c.timeline?.endFieldId ?? ""} onChange={(e) => update({ timeline: { ...tl, endFieldId: e.target.value || null } })}>
+              <option value="">Same day</option>
+              {dateFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </label>
+          <select className="select" style={{ width: 90 }} aria-label="Scale" value={tl.scale} onChange={(e) => update({ timeline: { ...tl, scale: e.target.value as "day" | "week" | "month" } })}>
+            <option value="day">Days</option><option value="week">Weeks</option><option value="month">Months</option>
+          </select>
+          <label className="row small" title="A link field to records in this table that each record depends on">Depends on
+            <select className="select" style={{ width: 130 }} value={c.timeline?.dependencyFieldId ?? ""} onChange={(e) => update({ timeline: { ...tl, dependencyFieldId: e.target.value || null } })}>
+              <option value="">None</option>
+              {fields.filter((f) => f.type === "link" && f.options.linkedTableId === table.id).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </label>
+        </>
+      )}
+      {view.type === "list" && (
+        <label className="row small" title="Show each record's linked records under it">Nest by
+          <select className="select" style={{ width: 140 }} value={c.list?.nestFieldId ?? ""} onChange={(e) => update({ list: { nestFieldId: e.target.value || null } })}>
+            <option value="">Nothing</option>
+            {fields.filter((f) => f.type === "link").map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+        </label>
       )}
       {view.type === "kanban" && (
         <label className="row small">Stack by
@@ -200,7 +340,8 @@ export function Toolbar({ view, onAddRecord }: { view: View; onAddRecord: () => 
         </label>
       )}
       <span className="spacer" />
-      {view.type !== "form" && !table?.sync && <button className="btn primary" onClick={onAddRecord}>+ Add record</button>}
+      {view.type !== "form" && <SearchBox />}
+      {view.type !== "form" && !table?.sync && canAddRecords(snap, table) && <button className="btn primary" onClick={onAddRecord}>+ Add record</button>}
     </div>
   );
 }

@@ -20,6 +20,18 @@ import type { Action } from "./src/shared/types";
 import { handlePublicApi } from "./src/server/publicApi";
 import { createToken, listTokens, revokeToken } from "./src/server/apiTokens";
 import { createWebhook, deleteWebhook, enableWebhook, listWebhooks } from "./src/server/webhooks";
+import { sharedViewData, sharedViewHasFile } from "./src/shared/publicView";
+import { sharedPageData, sharedPageHasFile } from "./src/shared/publicPage";
+import { TEMPLATES } from "./src/shared/templates";
+import { audit } from "./src/server/audit";
+import { readAudit } from "./src/server/audit";
+import { listNotifications, markRead, notify } from "./src/server/notifications";
+import { listUsers, loginWithSso, readCookie as readCookieValue, requireAdmin, updateUser } from "./src/server/auth";
+import { SSO_COOKIE, ssoCallback, ssoPublicInfo, ssoStart } from "./src/server/sso";
+import {
+  createWorkspace, deleteWorkspace, listWorkspaceMembers, listWorkspaces, moveBase, removeWorkspaceMember, renameWorkspace,
+  requireWorkspaceRole, setWorkspaceRole, shareWorkspace, workspaceBaseIds,
+} from "./src/server/workspaces";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT ?? 3210);
@@ -76,19 +88,48 @@ async function requireUser(req: IncomingMessage): Promise<User> {
   return user;
 }
 
-async function handleAuth(req: IncomingMessage, res: ServerResponse, action: string, method: string) {
+async function handleAuth(req: IncomingMessage, res: ServerResponse, action: string, method: string, url: URL) {
   if (action === "me" && method === "GET") {
     const user = await userFromCookie(req.headers.cookie);
     return user ? send(res, 200, { user }) : send(res, 401, { error: "Not signed in" });
   }
+  // Single sign-on (OpenID Connect).
+  if (action === "sso" && method === "GET") {
+    const step = url.pathname.split("/")[4];
+    if (!step) return send(res, 200, ssoPublicInfo());
+    if (step === "start") {
+      rateLimit(`sso:${clientIp(req)}`, 60);
+      const { url: to, cookie } = await ssoStart(url.searchParams.get("next") ?? "/");
+      res.writeHead(302, { location: to, "set-cookie": `${SSO_COOKIE}=${cookie}; Path=/api/auth/sso; HttpOnly; SameSite=Lax; Max-Age=600${secureCookies ? "; Secure" : ""}`, "cache-control": "no-store" });
+      return res.end();
+    }
+    if (step === "callback") {
+      const clear = `${SSO_COOKIE}=; Path=/api/auth/sso; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies ? "; Secure" : ""}`;
+      try {
+        const who = await ssoCallback(url.searchParams, readCookieValue(req.headers.cookie, SSO_COOKIE));
+        const { user, token, created } = await loginWithSso(who.email, who.name, who.verified);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: created ? "auth.sso_signup" : "auth.sso_login" });
+        res.writeHead(302, { location: who.next, "set-cookie": [sessionCookie(token, secureCookies), clear], "cache-control": "no-store" });
+      } catch (e) {
+        const msg = e instanceof AuthError ? e.message : "Single sign-on failed";
+        if (!(e instanceof AuthError)) console.error("sso failed", e);
+        audit({ ip: clientIp(req), action: "auth.sso_failed", detail: { reason: msg } });
+        res.writeHead(302, { location: `/login?error=${encodeURIComponent(msg)}`, "set-cookie": clear, "cache-control": "no-store" });
+      }
+      return res.end();
+    }
+  }
   if (method !== "POST") return send(res, 404, { error: "Not found" });
   if (action === "logout") {
+    const who = await userFromCookie(req.headers.cookie);
     await logout(req.headers.cookie);
+    if (who) audit({ userId: who.id, email: who.email, ip: clientIp(req), action: "auth.logout" });
     return send(res, 200, { ok: true }, { "set-cookie": clearedCookie(secureCookies) });
   }
   const body = await readJson(req);
   if (action === "signup") {
     const { user, token } = await signup(body.email, body.name, body.password, clientIp(req));
+    audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.signup" });
     if (!user.verified) sendVerification(user).catch((e) => console.error("verification email failed:", e instanceof Error ? e.message : e));
     return send(res, 201, { user, delivery: mailMode() }, { "set-cookie": sessionCookie(token, secureCookies) });
   }
@@ -103,12 +144,19 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
     return send(res, 200, { ok: true, delivery: mailMode() });
   }
   if (action === "login") {
-    const { user, token } = await login(body.email, body.password, clientIp(req));
+    let result;
+    try { result = await login(body.email, body.password, clientIp(req)); } catch (e) {
+      audit({ email: typeof body.email === "string" ? body.email.slice(0, 254) : null, ip: clientIp(req), action: "auth.login_failed", detail: { reason: e instanceof Error ? e.message : "" } });
+      throw e;
+    }
+    const { user, token } = result;
+    audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.login" });
     return send(res, 200, { user }, { "set-cookie": sessionCookie(token, secureCookies) });
   }
   if (action === "password") {
     const user = await requireUser(req);
     await changePassword(user, req.headers.cookie, body.current, body.password);
+    audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.password_changed" });
     return send(res, 200, { ok: true });
   }
   if (action === "forgot") {
@@ -123,6 +171,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, action: str
   }
   if (action === "reset") {
     const { user, token } = await resetPassword(body.token, body.password, clientIp(req));
+    audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "auth.password_reset" });
     return send(res, 200, { user }, { "set-cookie": sessionCookie(token, secureCookies) });
   }
   return send(res, 404, { error: "Not found" });
@@ -168,18 +217,114 @@ async function handlePublicForm(req: IncomingMessage, res: ServerResponse, token
   return send(res, 200, { ok: true });
 }
 
+/** Read-only public links to views and interface pages (no account needed). */
+async function handleShared(req: IncomingMessage, res: ServerResponse, parts: string[], method: string) {
+  if (method !== "GET") return send(res, 404, { error: "Not found" });
+  const [kind, token, sub, fileId] = parts.slice(2);
+  rateLimit(`shared:${clientIp(req)}`, 600);
+  if (kind === "views") {
+    const found = await engine.findSharedView(token ?? "");
+    if (!found) return send(res, 404, { error: "This view isn't available. The link may have been turned off." });
+    const data = sharedViewData({ ...found.state, people: await engine.people(found.baseId) }, found.view);
+    if (!sub) return send(res, 200, data);
+    if (sub === "files" && fileId && sharedViewHasFile(data, fileId)) return serveFile(res, fileId, null, found.baseId);
+  }
+  if (kind === "pages") {
+    const found = await engine.findSharedPage(token ?? "");
+    if (!found) return send(res, 404, { error: "This page isn't available. The link may have been turned off." });
+    const data = sharedPageData({ ...found.state, people: await engine.people(found.baseId) }, found.page);
+    if (!sub) return send(res, 200, data);
+    if (sub === "files" && fileId && sharedPageHasFile(data, fileId)) return serveFile(res, fileId, null, found.baseId);
+  }
+  return send(res, 404, { error: "Not found" });
+}
+
 /** Responses per visitor and per form, each per 15 minutes. */
 const PUBLIC_FORM_PER_VISITOR = Number(process.env.GRIDBASE_FORM_LIMIT_PER_VISITOR ?? 10);
 const PUBLIC_FORM_PER_FORM = Number(process.env.GRIDBASE_FORM_LIMIT_PER_FORM ?? 300);
+
+/** Log public links that were turned on, off or replaced by a change. */
+async function auditLinks(baseId: string, before: import("./src/shared/types").BaseState | null, user: User, ip: string) {
+  const after = await engine.getState(baseId);
+  if (!before || !after || (before.views === after.views && before.pages === after.pages)) return;
+  for (const [id, v] of Object.entries(after.views)) {
+    const was = before.views[id];
+    if (!was || was === v) continue;
+    if ((was.config.shareToken ?? null) !== (v.config.shareToken ?? null)) audit({ userId: user.id, email: user.email, ip, baseId, action: v.config.shareToken ? "link.view_shared" : "link.view_unshared", detail: { viewId: id, name: v.name } });
+    if ((was.config.form?.publicToken ?? null) !== (v.config.form?.publicToken ?? null)) audit({ userId: user.id, email: user.email, ip, baseId, action: v.config.form?.publicToken ? "link.form_public" : "link.form_private", detail: { viewId: id, name: v.name } });
+  }
+  for (const [id, pg] of Object.entries(after.pages ?? {})) {
+    const was = before.pages?.[id];
+    if (was !== pg && (was?.shareToken ?? null) !== (pg.shareToken ?? null)) audit({ userId: user.id, email: user.email, ip, baseId, action: pg.shareToken ? "link.page_published" : "link.page_unpublished", detail: { pageId: id, name: pg.name } });
+  }
+}
+
+/** Workspaces and their members. Changes reach open windows of every base in the workspace. */
+async function handleWorkspaces(req: IncomingMessage, res: ServerResponse, parts: string[], method: string, user: User) {
+  const [id, sub, item] = parts.slice(2);
+  const ip = clientIp(req);
+  const refresh = async (userId: string) => { for (const b of await workspaceBaseIds(id)) engine.notifyAccess(b, userId, await roleFor(userId, b)); };
+  if (!id && method === "GET") return send(res, 200, { workspaces: await listWorkspaces(user.id) });
+  if (!id && method === "POST") {
+    const wid = await createWorkspace(user.id, (await readJson(req)).name);
+    audit({ userId: user.id, email: user.email, ip, action: "workspace.created", detail: { workspaceId: wid } });
+    return send(res, 201, { id: wid });
+  }
+  if (!id) return send(res, 404, { error: "Not found" });
+  if (!sub && method === "PATCH") { await requireWorkspaceRole(user.id, id, "owner"); await renameWorkspace(id, (await readJson(req)).name); return send(res, 200, { ok: true }); }
+  if (!sub && method === "DELETE") {
+    await requireWorkspaceRole(user.id, id, "owner");
+    const members = await listWorkspaceMembers(id);
+    const bases = await workspaceBaseIds(id);
+    await deleteWorkspace(id);
+    for (const m of members) for (const b of bases) engine.notifyAccess(b, m.userId, await roleFor(m.userId, b));
+    audit({ userId: user.id, email: user.email, ip, action: "workspace.deleted", detail: { workspaceId: id } });
+    return send(res, 200, { ok: true });
+  }
+  if (sub === "members") {
+    if (method === "GET") { const myRole = await requireWorkspaceRole(user.id, id, "viewer"); return send(res, 200, { members: await listWorkspaceMembers(id), myRole, me: user.id }); }
+    if (method === "DELETE" && item === user.id) {
+      await requireWorkspaceRole(user.id, id, "viewer");
+      await removeWorkspaceMember(id, user.id);
+      await refresh(user.id);
+      return send(res, 200, { ok: true });
+    }
+    await requireWorkspaceRole(user.id, id, "owner");
+    if (method === "POST" && !item) {
+      const body = await readJson(req);
+      const added = await shareWorkspace(id, body.email, body.role);
+      await refresh(added.userId);
+      void notify(added.userId, { kind: "shared", title: `${user.name} added you to a workspace`, body: `You can now open its bases (${added.role}).`, link: "/" }).catch(() => {});
+      audit({ userId: user.id, email: user.email, ip, action: "workspace.member_added", detail: { workspaceId: id, email: added.email, role: added.role } });
+      return send(res, 200, added);
+    }
+    if (method === "PATCH" && item) {
+      const body = await readJson(req);
+      await setWorkspaceRole(id, item, body.role);
+      await refresh(item);
+      audit({ userId: user.id, email: user.email, ip, action: "workspace.role_changed", detail: { workspaceId: id, target: item, role: body.role } });
+      return send(res, 200, { ok: true });
+    }
+    if (method === "DELETE" && item) {
+      await removeWorkspaceMember(id, item);
+      await refresh(item);
+      audit({ userId: user.id, email: user.email, ip, action: "workspace.member_removed", detail: { workspaceId: id, target: item } });
+      return send(res, 200, { ok: true });
+    }
+  }
+  return send(res, 404, { error: "Not found" });
+}
 
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const parts = url.pathname.split("/").filter(Boolean); // ["api", "bases", id?, sub?, item?]
   const method = req.method ?? "GET";
   try {
     if (method !== "GET" && !sameOrigin(req)) throw new AuthError(403, "Cross-site request blocked");
-    if (parts[1] === "auth") return await handleAuth(req, res, parts[2] ?? "", method);
+    if (parts[1] === "auth") { await handleAuth(req, res, parts[2] ?? "", method, url); return; }
+    if (parts[1] === "templates" && method === "GET") return send(res, 200, { templates: TEMPLATES });
     if (parts[1] === "admin" && method === "POST") return await handleAdmin(req, res, parts[2] ?? "");
     if (parts[1] === "forms" && parts[2]) return await handlePublicForm(req, res, parts[2], method);
+    if (parts[1] === "shared") return await handleShared(req, res, parts, method);
 
     const user = await requireUser(req);
     if (parts[1] === "files" && method === "GET" && parts[2]) return await serveFile(res, parts[2], user);
@@ -188,9 +333,35 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       if (method === "GET" && !parts[2]) return send(res, 200, { tokens: await listTokens(user.id) });
       if (method === "POST" && !parts[2]) {
         const body = await readJson(req);
-        return send(res, 201, await createToken(user.id, body.name, body.baseIds, body.canWrite));
+        const t = await createToken(user.id, body.name, body.baseIds, body.canWrite);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "token.created", detail: { name: body.name, canWrite: Boolean(body.canWrite), baseIds: body.baseIds ?? null } });
+        return send(res, 201, t);
       }
-      if (method === "DELETE" && parts[2]) { await revokeToken(user.id, parts[2]); return send(res, 200, { ok: true }); }
+      if (method === "DELETE" && parts[2]) {
+        await revokeToken(user.id, parts[2]);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "token.revoked", detail: { tokenId: parts[2] } });
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 404, { error: "Not found" });
+    }
+    if (parts[1] === "notifications") {
+      if (method === "GET") return send(res, 200, await listNotifications(user.id));
+      if (method === "POST" && parts[2] === "read") { await markRead(user.id, (await readJson(req)).ids); return send(res, 200, { ok: true }); }
+    }
+    if (parts[1] === "workspaces") return await handleWorkspaces(req, res, parts, method, user);
+    if (parts[1] === "manage") {
+      await requireAdmin(user);
+      if (parts[2] === "users" && method === "GET" && !parts[3]) return send(res, 200, { users: await listUsers() });
+      if (parts[2] === "users" && method === "PATCH" && parts[3]) {
+        const body = await readJson(req);
+        await updateUser(user, parts[3], body);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "admin.user_changed", detail: { target: parts[3], admin: body.admin, disabled: body.disabled } });
+        return send(res, 200, { ok: true });
+      }
+      if (parts[2] === "audit" && method === "GET") {
+        const q = url.searchParams;
+        return send(res, 200, { entries: await readAudit({ before: Number(q.get("before")) || null, action: q.get("action"), user: q.get("user"), baseId: q.get("baseId"), limit: Number(q.get("limit")) || 100 }) });
+      }
       return send(res, 404, { error: "Not found" });
     }
     if (parts[1] !== "bases") return send(res, 404, { error: "Not found" });
@@ -201,14 +372,53 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (!baseId && method === "GET") return send(res, 200, { bases: await engine.listBases(user.id) });
     if (!baseId && method === "POST") {
       const body = await readJson(req);
-      return send(res, 201, { id: await engine.createBase(String(body.name ?? ""), user.id) });
+      const workspaceId = typeof body.workspaceId === "string" && body.workspaceId ? body.workspaceId : null;
+      if (workspaceId) await requireWorkspaceRole(user.id, workspaceId, "editor");
+      const id = await engine.createBase(String(body.name ?? ""), user.id, typeof body.templateId === "string" ? body.templateId : null, workspaceId);
+      audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "base.created", baseId: id, detail: { templateId: body.templateId ?? null, workspaceId } });
+      return send(res, 201, { id });
     }
     if (!baseId) return send(res, 404, { error: "Not found" });
 
     if (!sub && method === "DELETE") {
       await requireRole(user, baseId, "owner");
       await engine.deleteBase(baseId);
+      audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "base.deleted", baseId });
       return send(res, 200, { ok: true });
+    }
+    if (sub === "duplicate" && method === "POST") {
+      await requireRole(user, baseId, "editor");
+      const body = await readJson(req);
+      const id = await engine.duplicateBase(baseId, user.id, String(body.name ?? ""), body.withRecords !== false);
+      audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "base.duplicated", baseId: id, detail: { from: baseId } });
+      return send(res, 201, { id });
+    }
+    if (sub === "move" && method === "POST") {
+      const body = await readJson(req);
+      const workspaceId = typeof body.workspaceId === "string" && body.workspaceId ? body.workspaceId : null;
+      await moveBase(user.id, baseId, workspaceId);
+      audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "base.moved", baseId, detail: { workspaceId } });
+      return send(res, 200, { ok: true });
+    }
+    if (sub === "snapshots") {
+      if (method === "GET" && !item) { await requireRole(user, baseId, "editor"); return send(res, 200, { snapshots: await engine.listSnapshots(baseId) }); }
+      if (method === "POST" && !item) {
+        await requireRole(user, baseId, "editor");
+        const out = await engine.createSnapshot(baseId, user.id, (await readJson(req)).name);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "snapshot.created", baseId });
+        return send(res, 201, out);
+      }
+      if (method === "POST" && item && parts[5] === "restore") {
+        await requireRole(user, baseId, "owner");
+        await engine.restoreSnapshot(baseId, item, user.id);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "snapshot.restored", baseId, detail: { snapshotId: item } });
+        return send(res, 200, { ok: true });
+      }
+      if (method === "DELETE" && item) {
+        await requireRole(user, baseId, "owner");
+        await engine.deleteSnapshot(baseId, item);
+        return send(res, 200, { ok: true });
+      }
     }
     if (sub === "me" && method === "GET") {
       return send(res, 200, { user, role: await requireRole(user, baseId, "viewer") });
@@ -221,12 +431,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (sub === "actions" && method === "POST") {
       await requireRole(user, baseId, "editor");
       const body = await readJson(req);
+      const before = await engine.getState(baseId);
       const batch = await engine.apply(baseId, {
         clientId: typeof body.clientId === "string" ? body.clientId : null,
         requestId: typeof body.requestId === "string" ? body.requestId : null,
         actions: Array.isArray(body.actions) ? (body.actions as Action[]) : [],
         userId: user.id,
       });
+      void auditLinks(baseId, before, user, clientIp(req));
       return send(res, 200, { txn: batch.txn });
     }
     if (sub === "files" && method === "POST") {
@@ -320,10 +532,16 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       if (method === "POST" && !item) {
         const body = await readJson(req);
         const state = await engine.getState(baseId);
-        return send(res, 201, await createWebhook(baseId, state!, user.id, body.url, body.tableId));
+        const hook = await createWebhook(baseId, state!, user.id, body.url, body.tableId);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "webhook.created", baseId, detail: { url: typeof body.url === "string" ? new URL(body.url).host : null } });
+        return send(res, 201, hook);
       }
       if (method === "POST" && item && parts[5] === "enable") { await enableWebhook(baseId, item); return send(res, 200, { ok: true }); }
-      if (method === "DELETE" && item) { await deleteWebhook(baseId, item); return send(res, 200, { ok: true }); }
+      if (method === "DELETE" && item) {
+        await deleteWebhook(baseId, item);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "webhook.deleted", baseId, detail: { webhookId: item } });
+        return send(res, 200, { ok: true });
+      }
     }
     // Synced tables: copy a grid view from another base you can edit.
     if (sub === "sync-sources" && method === "GET") {
@@ -334,6 +552,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       await requireRole(user, baseId, "editor");
       if (!item) {
         const body = await readJson(req);
+        if (body.url !== undefined) return send(res, 201, { tableId: await engine.createUrlSyncedTable(baseId, user.id, body.url, body.name) });
         return send(res, 201, { tableId: await engine.createSyncedTable(baseId, user.id, body.sourceBaseId, body.sourceViewId) });
       }
       if (parts[5] === "run") { await engine.runSync(baseId, item); return send(res, 200, { ok: true }); }
@@ -355,9 +574,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
         const body = await readJson(req);
         const result = await share(baseId, body.email, body.role);
         if (result.userId) engine.notifyAccess(baseId, result.userId, await roleFor(result.userId, baseId));
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "share.added", baseId, detail: { email: result.email, role: result.role, invited: !result.added } });
         // Let them know by email (in the background; sharing doesn't wait for it).
         const baseName = (await engine.getState(baseId))?.base.name ?? "a base";
         if (result.added && !result.wasMember) {
+          if (result.userId) void notify(result.userId, { baseId, kind: "shared", title: `${user.name} shared “${baseName}” with you`, body: `You can ${result.role === "viewer" ? "view" : result.role === "commenter" ? "comment on" : "edit"} it.`, link: `/base/${baseId}` }).catch(() => {});
           sendMailInBackground(sharedEmail(result.email, user.name, baseName, result.role, `${appUrl()}/base/${baseId}`));
         } else if (!result.added) {
           const link = `${appUrl()}/login?mode=signup&email=${encodeURIComponent(result.email)}&next=${encodeURIComponent(`/base/${baseId}`)}`;
@@ -369,11 +590,13 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
         const body = await readJson(req);
         await setRole(baseId, item, body.role);
         engine.notifyAccess(baseId, item, await roleFor(item, baseId));
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "share.role_changed", baseId, detail: { target: item, role: body.role } });
         return send(res, 200, { ok: true });
       }
       if (method === "DELETE" && item) {
         await removeMember(baseId, item);
-        engine.notifyAccess(baseId, item, null);
+        audit({ userId: user.id, email: user.email, ip: clientIp(req), action: "share.removed", baseId, detail: { target: item } });
+        engine.notifyAccess(baseId, item, await roleFor(item, baseId));
         return send(res, 200, { ok: true });
       }
     }
@@ -395,9 +618,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
 // so an uploaded file can never run code on this site.
 const INLINE_TYPES = /^(image\/(png|jpe?g|gif|webp|avif|bmp)|application\/pdf|text\/plain)$/;
 
-async function serveFile(res: ServerResponse, id: string, user: User) {
+/** Send a stored file to a member (user), or for a public link that already checked the file (baseId). */
+async function serveFile(res: ServerResponse, id: string, user: User | null, baseId?: string) {
   const file = await engine.getFile(id);
-  if (!file || !(await roleFor(user.id, file.baseId))) return send(res, 404, { error: "File not found" });
+  const ok = file && (user ? await roleFor(user.id, file.baseId) : file.baseId === baseId);
+  if (!file || !ok) return send(res, 404, { error: "File not found" });
   const inline = INLINE_TYPES.test(file.type);
   res.writeHead(200, {
     "content-type": inline ? file.type : "application/octet-stream",
@@ -447,7 +672,8 @@ function handleSocket(ws: WebSocket, url: URL, user: User) {
 /** Pages anyone may load without signing in. */
 function isPublicPath(path: string): boolean {
   return path === "/login" || path === "/reset" || path === "/verify" || path.startsWith("/f/") || path.startsWith("/_next/") || path.startsWith("/__nextjs") || path === "/favicon.ico"
-    || path === "/manifest.webmanifest" || path === "/sw.js" || path === "/offline.html" || path.startsWith("/icons/");
+    || path === "/manifest.webmanifest" || path === "/sw.js" || path === "/offline.html" || path.startsWith("/icons/")
+    || path.startsWith("/v/") || path.startsWith("/i/");
 }
 
 await app.prepare();

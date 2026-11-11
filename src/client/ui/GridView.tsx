@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { CellValue, Field, Row, View } from "@/shared/types";
+import type { CellValue, Field, Row, SummaryFn, View } from "@/shared/types";
 import { isReadOnly } from "@/shared/fieldTypes";
 import { groupRows, viewRows, visibleFields, type RowGroup } from "@/shared/query";
 import { newId } from "@/shared/ids";
@@ -12,6 +12,9 @@ import { AttachmentEditor, LinkPicker, SelectPicker, toEditText } from "./inputs
 import { RatingStars, UserPicker } from "./newFields";
 import { cellActions } from "./actions";
 import { prefillFromFilters } from "./prefill";
+import { canEditField, canAddRecords } from "./permissions";
+import { cellMatches, recordColor, rowHeightOf, searchRows, summarize, SUMMARY_LABELS, summariesFor } from "@/shared/viewTools";
+import { RichText } from "./richText";
 
 type Pos = { rowId: string; fieldId: string };
 type Item = { kind: "group"; group: RowGroup; depth: number } | { kind: "row"; row: Row; index: number };
@@ -19,7 +22,6 @@ type Item = { kind: "group"; group: RowGroup; depth: number } | { kind: "row"; r
 const TEXTY = new Set(["text", "longText", "number", "email", "url", "phone", "duration", "barcode"]);
 
 // Fixed heights let us work out where every row sits without rendering it.
-const ROW_H = 34;
 const GROUP_H = 36;
 const HEAD_H = 34;
 const ROWNUM_W = 56;
@@ -37,11 +39,14 @@ function lowerBound(offsets: number[], value: number): number {
 }
 
 export function GridView({ view }: { view: View }) {
-  const { snap, client, openRecord, openFieldDialog } = useBase();
+  const { snap, client, openRecord, openFieldDialog, search } = useBase();
   const { state, computer: c } = snap;
   const table = state.tables[view.tableId];
+  const ROW_H = rowHeightOf(view);
+  const tall = ROW_H > 34;
   const fields = useMemo(() => visibleFields(state, view), [state, view]);
-  const rows = useMemo(() => viewRows(c, state, view), [c, state, view]);
+  const allRows = useMemo(() => viewRows(c, state, view), [c, state, view]);
+  const rows = useMemo(() => searchRows(c, allRows, fields, search), [c, allRows, fields, search]);
   const groups = useMemo(() => groupRows(c, rows, view.config.groupBy ?? []), [c, rows, view.config.groupBy]);
 
   const items = useMemo(() => {
@@ -63,7 +68,7 @@ export function GridView({ view }: { view: View }) {
     const o = [0];
     for (const it of items) o.push(o[o.length - 1] + (it.kind === "group" ? GROUP_H : ROW_H));
     return o;
-  }, [items]);
+  }, [items, ROW_H]);
 
   // Only rows near the visible part of the scroll area are rendered.
   const gridRef = useRef<HTMLDivElement>(null);
@@ -86,7 +91,7 @@ export function GridView({ view }: { view: View }) {
   const end = Math.min(items.length, lowerBound(offsets, win.top + win.height + OVERSCAN));
 
   // Latest layout for callbacks that run after a re-render (e.g. right after adding a row).
-  const layout = useRef({ items, offsets, cols: [] as { id: string; w: number }[] });
+  const layout = useRef({ items, offsets, cols: [] as { id: string; w: number }[], frozen: 1, rowH: ROW_H });
 
   /**
    * Scroll so a cell is on screen. The row may not be rendered yet, so this works
@@ -94,18 +99,18 @@ export function GridView({ view }: { view: View }) {
    */
   const ensureVisible = useCallback((rowId: string, fieldId: string) => {
     const el = gridRef.current?.closest(".view-body") as HTMLElement | null;
-    const { items: its, offsets: offs, cols } = layout.current;
+    const { items: its, offsets: offs, cols, frozen, rowH } = layout.current;
     const idx = its.findIndex((it) => it.kind === "row" && it.row.id === rowId);
     if (!el || idx < 0) return;
     // Up/down: the sticky header covers the top HEAD_H pixels.
     const top = offs[idx];
-    const bottom = HEAD_H + offs[idx] + ROW_H;
+    const bottom = HEAD_H + offs[idx] + rowH;
     if (top < el.scrollTop) el.scrollTop = top;
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
-    // Left/right: the row number and primary columns stay pinned on the left.
+    // Left/right: the row number and frozen columns stay pinned on the left.
     const ci = cols.findIndex((c) => c.id === fieldId);
-    if (ci <= 0) return;
-    const pinned = ROWNUM_W + cols[0].w;
+    if (ci < frozen) return;
+    const pinned = ROWNUM_W + cols.slice(0, frozen).reduce((s, c) => s + c.w, 0);
     const left = ROWNUM_W + cols.slice(0, ci).reduce((s, c) => s + c.w, 0);
     const right = left + cols[ci].w;
     if (left < el.scrollLeft + pinned) el.scrollLeft = left - pinned;
@@ -139,7 +144,14 @@ export function GridView({ view }: { view: View }) {
   const catcherRef = useRef<HTMLTextAreaElement>(null);
 
   const width = (f: Field) => widths[f.id] ?? view.config.fieldWidths?.[f.id] ?? (f.id === table.primaryFieldId ? 240 : 180);
-  layout.current = { items, offsets, cols: fields.map((f) => ({ id: f.id, w: width(f) })) };
+  const frozen = Math.min(Math.max(1, view.config.frozenCount ?? 1), fields.length);
+  layout.current = { items, offsets, cols: fields.map((f) => ({ id: f.id, w: width(f) })), frozen, rowH: ROW_H };
+  // Frozen columns stay put while the grid scrolls sideways.
+  const lefts: number[] = [];
+  fields.reduce((x, f, i) => { lefts[i] = x; return x + width(f); }, ROWNUM_W);
+  const colClass = (i: number) => (i < frozen ? `frozen ${i === frozen - 1 ? "frozen-last" : ""}` : "");
+  const colStyle = (i: number, f: Field): React.CSSProperties => (i < frozen ? { width: width(f), left: lefts[i] } : { width: width(f) });
+  const [summaryMenu, setSummaryMenu] = useState<string | null>(null);
   const focusGrid = () => catcherRef.current?.focus({ preventScroll: true });
 
   // Drop the selection if its row or field disappears.
@@ -181,6 +193,7 @@ export function GridView({ view }: { view: View }) {
     const row = state.rows[pos.rowId];
     if (!field || !row || isReadOnly(field)) return;
     if (!client.ensureCanEdit()) return; // viewers get a message instead of an editor
+    if (!canEditField(snap, field)) return client.showError(`You can't change "${field.name}"`);
     if (field.type === "checkbox") return setCell(row.id, field, !row.cells[field.id]);
     // Render the editor right away so the next keystroke lands in it, not in the grid.
     flushSync(() => setEditing({ ...pos, seed: TEXTY.has(field.type) ? seed : undefined }));
@@ -199,7 +212,7 @@ export function GridView({ view }: { view: View }) {
     else if (k === "Enter") { e.preventDefault(); if (e.shiftKey) openRecord(row.id); else startEdit(sel); }
     else if (k === "Escape") setSel(null);
     else if (k === " " && field.type === "checkbox") { e.preventDefault(); startEdit(sel); }
-    else if ((k === "Backspace" || k === "Delete") && !isReadOnly(field)) { e.preventDefault(); setCell(row.id, field, null); }
+    else if ((k === "Backspace" || k === "Delete") && !isReadOnly(field)) { e.preventDefault(); if (canEditField(snap, field)) setCell(row.id, field, null); }
     else if (field.type === "rating" && /^[0-9]$/.test(k) && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (client.ensureCanEdit()) setCell(row.id, field, k === "0" ? null : Number(k)); }
     else if (k.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && TEXTY.has(field.type)) { e.preventDefault(); startEdit(sel, k); }
   }
@@ -215,7 +228,7 @@ export function GridView({ view }: { view: View }) {
   function onPaste(e: React.ClipboardEvent) {
     if (editing || !sel) return;
     const row = state.rows[sel.rowId], field = state.fields[sel.fieldId];
-    if (!row || !field || isReadOnly(field) || field.type === "attachment") return;
+    if (!row || !field || isReadOnly(field) || field.type === "attachment" || !canEditField(snap, field)) return;
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain").trim();
     if (field.type === "singleSelect" || field.type === "multiSelect") {
@@ -251,11 +264,19 @@ export function GridView({ view }: { view: View }) {
   }
 
   const totalWidth = 56 + fields.reduce((s, f) => s + width(f), 0) + 120;
+  const summaries = view.config.summaries ?? {};
+  const setSummary = (fieldId: string, fn: SummaryFn | null) => {
+    const next = { ...summaries };
+    if (fn) next[fieldId] = fn; else delete next[fieldId];
+    client.dispatch({ type: "view.update", viewId: view.id, config: { summaries: next } });
+    setSummaryMenu(null);
+  };
+  const addAllowed = !table.sync && canAddRecords(snap, table);
 
   return (
     <div
-      className="grid" ref={gridRef} onKeyDown={onKeyDown} onCopy={onCopy} onPaste={onPaste}
-      style={{ width: totalWidth, outline: "none" }} aria-label={`${table.name} grid`} role="grid" aria-rowcount={rowIds.length + 1}
+      className={`grid ${tall ? "tall" : ""}`} ref={gridRef} onKeyDown={onKeyDown} onCopy={onCopy} onPaste={onPaste}
+      style={{ width: totalWidth, outline: "none", ["--row-h" as string]: `${ROW_H}px` }} aria-label={`${table.name} grid`} role="grid" aria-rowcount={rowIds.length + 1}
     >
       <textarea
         ref={catcherRef} className="key-catcher" aria-label="Type to edit the selected cell" tabIndex={0}
@@ -269,11 +290,12 @@ export function GridView({ view }: { view: View }) {
       />
       <div className="grid-row grid-head" role="row">
         <div className="cell rownum">#</div>
-        {fields.map((f) => (
-          <div key={f.id} className={`cell ${f.id === table.primaryFieldId ? "primary" : ""}`} style={{ width: width(f) }} role="columnheader"
+        {fields.map((f, fi) => (
+          <div key={f.id} className={`cell ${colClass(fi)}`} style={colStyle(fi, f)} role="columnheader"
             onDoubleClick={() => openFieldDialog({ tableId: table.id, fieldId: f.id })}>
             <FieldIcon field={f} />
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={f.description || f.name}>{f.name}</span>
+            {f.editableBy && <span className="muted small" title="Only some people can change this field">🔒</span>}
             <Popover open={menu?.kind === "field" && menu.fieldId === f.id} onClose={() => setMenu(null)} anchor={
               <button className="head-menu-btn" onClick={() => setMenu({ kind: "field", fieldId: f.id })} aria-label={`${f.name} menu`}>▾</button>
             }>
@@ -319,6 +341,7 @@ export function GridView({ view }: { view: View }) {
             }}
           >
             <div className="cell rownum">
+              {(() => { const color = recordColor(c, row, view.config.colors); return color ? <span className={`row-color s-${color}`} aria-hidden="true" /> : null; })()}
               <span
                 className={`drag-handle ${canDrag ? "" : "off"}`} draggable={canDrag} aria-hidden="true"
                 title={canDrag ? "Drag to reorder" : snap.role === "viewer" || snap.role === "commenter" ? "You can't change this base" : "Turn off sorting and grouping to drag records"}
@@ -349,15 +372,15 @@ export function GridView({ view }: { view: View }) {
                 <button className="expand-btn" onClick={() => openRecord(row.id)} aria-label="Expand record">⤢</button>
               )}
             </div>
-            {fields.map((f) => {
+            {fields.map((f, fi) => {
               const isSel = sel?.rowId === row.id && sel.fieldId === f.id;
               const isEdit = editing?.rowId === row.id && editing.fieldId === f.id;
               const err = c.isError(row, f);
               return (
                 <div
                   key={f.id} id={`cell-${row.id}-${f.id}`} role="gridcell"
-                  className={`cell ${f.id === table.primaryFieldId ? "primary" : ""} ${isSel ? "selected" : ""} ${isReadOnly(f) ? "computed" : ""} ${isNumeric(f) ? "num" : ""} ${f.type === "checkbox" ? "checkbox-cell" : ""} ${err ? "error" : ""}`}
-                  style={{ width: width(f), overflow: isEdit ? "visible" : undefined, zIndex: isEdit ? 6 : undefined }}
+                  className={`cell ${colClass(fi)} ${isSel ? "selected" : ""} ${isReadOnly(f) ? "computed" : ""} ${isNumeric(f) ? "num" : ""} ${f.type === "checkbox" ? "checkbox-cell" : ""} ${err ? "error" : ""} ${search && cellMatches(c, row, f, search) ? "match" : ""}`}
+                  style={{ ...colStyle(fi, f), overflow: isEdit ? "visible" : undefined, zIndex: isEdit ? 6 : undefined }}
                   onMouseDown={(e) => {
                     if (isEdit) return;
                     e.preventDefault(); // keep focus on the grid's key catcher
@@ -375,6 +398,8 @@ export function GridView({ view }: { view: View }) {
                       onSet={(v, ch, key) => setCell(row.id, f, v, ch, key)}
                       onDone={(dr = 0, dc = 0) => { setEditing(null); focusGrid(); if (dr || dc) move(dr, dc); }}
                     />
+                  ) : f.type === "longText" && f.options.richText ? (
+                    <RichText text={typeof row.cells[f.id] === "string" ? (row.cells[f.id] as string) : ""} inline={!tall} />
                   ) : (
                     <CellContent row={row} field={f} />
                   )}
@@ -386,13 +411,32 @@ export function GridView({ view }: { view: View }) {
       })}
       <div style={{ height: offsets[items.length] - offsets[end] }} aria-hidden="true" />
 
-      {!table.sync && (
-        <div className="grid-row add-row">
+      {addAllowed && (
+        <div className="grid-row add-row" style={{ height: 34 }}>
           <div className="cell rownum" onClick={() => addRow(rowIds[rowIds.length - 1])}>+</div>
-          <div className="cell primary" style={{ width: width(fields[0]) }} onClick={() => addRow(rowIds[rowIds.length - 1])}>Add record</div>
+          <div className="cell frozen frozen-last" style={{ width: width(fields[0]), left: ROWNUM_W }} onClick={() => addRow(rowIds[rowIds.length - 1])}>Add record</div>
         </div>
       )}
-      <div className="summary-bar">{rowIds.length} record{rowIds.length === 1 ? "" : "s"}</div>
+      <div className="grid-row summary-row" role="row">
+        <div className="cell rownum" title={search ? `${rowIds.length} of ${allRows.length} records match` : undefined}>{search ? `${rowIds.length}/${allRows.length}` : rowIds.length}</div>
+        {fields.map((f, fi) => {
+          const fn = summaries[f.id];
+          return (
+            <div key={f.id} className={`cell ${colClass(fi)} ${isNumeric(f) ? "num" : ""}`} style={colStyle(fi, f)}>
+              <Popover open={summaryMenu === f.id} onClose={() => setSummaryMenu(null)} anchor={
+                <button className={`summary-btn ${fn ? "on" : ""}`} onClick={() => setSummaryMenu(summaryMenu === f.id ? null : f.id)} aria-label={`Summary for ${f.name}`}>
+                  {fn ? <><span className="muted">{SUMMARY_LABELS[fn]}</span> {summarize(c, rows, f, fn)}</> : fi === 0 ? `${rowIds.length} record${rowIds.length === 1 ? "" : "s"}` : <span className="summary-hint">Summarize ▾</span>}
+                </button>
+              }>
+                <div className="menu">
+                  <button onClick={() => setSummary(f.id, null)}>None</button>
+                  {summariesFor(f).map((s) => <button key={s} className={fn === s ? "on" : ""} onClick={() => setSummary(f.id, s)}>{SUMMARY_LABELS[s]}</button>)}
+                </div>
+              </Popover>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

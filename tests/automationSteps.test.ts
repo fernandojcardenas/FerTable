@@ -131,3 +131,11 @@ test("posting refuses private addresses, including literal IPs", async () => {
     await assert.rejects(safePost(url, {}), /private network/, url);
   }
 });
+
+test("the DNS check answers both one-address and all-addresses lookups, and refuses private ones", async () => {
+  const { safeLookup } = await import("../src/server/connections");
+  for (const all of [true, false]) {
+    const err = await new Promise<Error | null>((resolve) => safeLookup("localhost", { all }, (e: Error | null) => resolve(e)));
+    assert.match(String(err?.message), /private network/, `all=${all}`);
+  }
+});

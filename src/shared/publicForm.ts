@@ -9,6 +9,12 @@ import { isAnswered, questionHelp, questionLabel, requiredIds } from "./forms";
 export const PUBLIC_TYPES = new Set<FieldType>(["text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "email", "url", "phone", "rating", "duration", "barcode"]);
 
 export const PUBLIC_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+
+/** A new secret code for a public link (forms, shared views, published interfaces). */
+export function newPublicToken(): string {
+  const A = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(32)), (b) => A[b % 62]).join("");
+}
 export const MAX_ANSWER_LENGTH = 10_000;
 
 export type PublicQuestion = {

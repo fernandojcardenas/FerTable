@@ -109,6 +109,8 @@ export class Computer {
         return row.autoNumber;
       case "lastModifiedTime":
         return row.modifiedAt ?? row.createdAt;
+      case "createdBy":
+        return row.createdBy ? this.personName(row.createdBy) : row.createdBy === null ? "Automation" : null;
       case "lastModifiedBy":
         return row.modifiedBy ? this.personName(row.modifiedBy) : row.modifiedAt ? "Automation" : null;
       case "user":

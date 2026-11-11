@@ -1,6 +1,7 @@
 // Comments on records. Kept outside the action log: they don't go through undo
 // and don't make the base snapshot bigger. They still sync live (see server.ts).
 
+import { notify } from "./notifications";
 import type { Comment } from "../shared/types";
 import { mentionedIds, plainComment } from "../shared/comments";
 import { newId } from "../shared/ids";
@@ -77,14 +78,15 @@ export async function notifyMentions(baseId: string, baseName: string, recordNam
   if (!ids.length) return;
   const db = await getDb();
   const { rows } = await db.query<{ id: string; email: string; name: string }>(
-    "select u.id, u.email, u.name from base_members m join users u on u.id = m.user_id where m.base_id = $1 and u.id = any($2::text[])",
+    "select u.id, u.email, u.name from access m join users u on u.id = m.user_id where m.base_id = $1 and u.id = any($2::text[])",
     [baseId, ids],
   );
-  const names = await db.query<{ id: string; name: string }>("select u.id, u.name from base_members m join users u on u.id = m.user_id where m.base_id = $1", [baseId]);
+  const names = await db.query<{ id: string; name: string }>("select u.id, u.name from access m join users u on u.id = m.user_id where m.base_id = $1", [baseId]);
   const nameOf = (id: string) => names.rows.find((r) => r.id === id)?.name;
   const text = plainComment(comment.body, nameOf);
   const link = `${appUrl()}/base/${baseId}?record=${comment.rowId}`;
   for (const r of rows) {
+    void notify(r.id, { baseId, kind: "mention", title: `${oneLine(comment.userName, 60)} mentioned you on “${oneLine(recordName, 80)}”`, body: text.slice(0, 300), link: `/base/${baseId}?record=${comment.rowId}` }).catch(() => {});
     sendMailInBackground({
       to: r.email,
       subject: `${oneLine(comment.userName, 60)} mentioned you on “${oneLine(recordName, 80)}”`,

@@ -6,6 +6,7 @@ import type { Attachment, CellValue, Field, Row } from "@/shared/types";
 import { FIELD_TYPES, isImage, rollupKind } from "@/shared/fieldTypes";
 import { toText, type FValue } from "@/shared/formula";
 import { ButtonCell, RatingStars, UserChips } from "./newFields";
+import { RichText } from "./richText";
 
 // ---- shared context for the open base ----
 
@@ -14,6 +15,9 @@ export type BaseUi = {
   snap: ClientSnapshot;
   openRecord: (rowId: string) => void;
   openFieldDialog: (opts: { tableId: string; fieldId?: string; afterFieldId?: string | null; presetType?: Field["type"] }) => void;
+  /** Text to find in the open view ("" = not searching). */
+  search: string;
+  setSearch: (q: string) => void;
 };
 
 export const BaseContext = createContext<BaseUi | null>(null);
@@ -170,6 +174,9 @@ export function CellContent({ row, field, detailed }: { row: Row; field: Field; 
       return Array.isArray(raw) ? <UserChips ids={raw as string[]} /> : null;
     case "button":
       return <ButtonCell row={row} field={field} />;
+    case "longText":
+      if (field.options.richText) return <RichText text={typeof raw === "string" ? raw : ""} inline={!detailed} />;
+      return <>{c.display(row, field)}</>;
     case "url": {
       const text = c.display(row, field);
       return text ? <a href={/^https?:\/\//.test(text) ? text : `https://${text}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{text}</a> : null;

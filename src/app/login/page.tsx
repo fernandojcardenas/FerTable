@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 /** Only same-site paths are allowed after signing in (no open redirects). */
@@ -16,7 +16,10 @@ function LoginForm() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Single sign-on sends errors back here as ?error=…
+  const [error, setError] = useState<string | null>(() => params.get("error"));
+  const [sso, setSso] = useState<{ enabled: boolean; name: string; only: boolean } | null>(null);
+  useEffect(() => { fetch("/api/auth/sso").then((r) => r.json()).then(setSso).catch(() => {}); }, []);
   const [forgot, setForgot] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
 
@@ -61,6 +64,19 @@ function LoginForm() {
             <span className="muted small">{signup ? "It only takes a moment." : "Welcome back."}</span>
           </div>
         </div>
+        {sso?.enabled && (
+          <>
+            <a className="btn sso-btn" href={`/api/auth/sso/start?next=${encodeURIComponent(safeNext(params.get("next")))}`}>🔐 Sign in with {sso.name}</a>
+            {!sso.only && <div className="muted small" style={{ textAlign: "center" }}>or</div>}
+          </>
+        )}
+        {sso?.only ? (
+          <>
+            {error && <p role="alert" className="small" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>}
+            <p className="muted small" style={{ margin: 0 }}>This server uses single sign-on only.</p>
+          </>
+        ) : (
+        <>
         {signup && (
           <div>
             <label className="field-label" htmlFor="name">Name</label>
@@ -96,6 +112,8 @@ function LoginForm() {
             {signup ? "Sign in" : "Create an account"}
           </button>
         </p>
+        </>
+        )}
       </form>
     </main>
   );

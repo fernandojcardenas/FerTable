@@ -1,7 +1,8 @@
 "use client";
 
+import { PermissionPicker } from "./PermissionPicker";
 import { useMemo, useState } from "react";
-import type { Field, FieldOptions, FieldType, RollupFn, SelectChoice } from "@/shared/types";
+import type { EditPermission, Field, FieldOptions, FieldType, RollupFn, SelectChoice } from "@/shared/types";
 import { CHOICE_COLORS, defaultOptions, FIELD_TYPE_ORDER, FIELD_TYPES, makeChoice } from "@/shared/fieldTypes";
 import { FUNCTION_NAMES, idsToNames, namesToIds, FormulaError, ROLLUP_PRESET_FORMULAS } from "@/shared/formula";
 import { Computer } from "@/shared/compute";
@@ -35,6 +36,7 @@ export function FieldDialog({ tableId, fieldId, afterFieldId, presetType, onClos
     existing?.type === "formula" ? idsToNames(existing.options.expression ?? "", tableFields) : "",
   );
   const [description, setDescription] = useState(existing?.description ?? "");
+  const [editableBy, setEditableBy] = useState<EditPermission>(existing?.editableBy ?? "editors");
 
   const changeType = (t: FieldType) => {
     setType(t);
@@ -89,6 +91,7 @@ export function FieldDialog({ tableId, fieldId, afterFieldId, presetType, onClos
     const ok = existing
       ? client.dispatch({
           type: "field.update", fieldId: existing.id, name: finalName, description,
+          ...(JSON.stringify(editableBy) !== JSON.stringify(existing.editableBy ?? "editors") ? { editableBy } : {}),
           ...(type !== existing.type ? { fieldType: type, inverseFieldId } : {}),
           options,
         })
@@ -181,6 +184,9 @@ export function FieldDialog({ tableId, fieldId, afterFieldId, presetType, onClos
           <ChoicesEditor choices={opts.choices ?? []} onChange={(choices) => setOpts({ ...opts, choices })} />
         )}
 
+        {type === "longText" && (
+          <label className="row"><input type="checkbox" checked={Boolean(opts.richText)} onChange={(e) => setOpts({ ...opts, richText: e.target.checked })} /> Allow formatting (bold, lists, links)</label>
+        )}
         {type === "date" && (
           <label className="row"><input type="checkbox" checked={Boolean(opts.includeTime)} onChange={(e) => setOpts({ ...opts, includeTime: e.target.checked })} /> Include a time</label>
         )}
@@ -286,6 +292,9 @@ export function FieldDialog({ tableId, fieldId, afterFieldId, presetType, onClos
             <label className="field-label">Description</label>
             <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" />
           </div>
+        )}
+        {existing && snap.role === "owner" && !FIELD_TYPES[type].computed && !existing.syncSourceFieldId && (
+          <PermissionPicker label="Who can change this field's values" value={editableBy} onChange={setEditableBy} />
         )}
         {problem && <p className="small" style={{ color: "var(--danger)", margin: 0 }}>{problem}</p>}
       </div>

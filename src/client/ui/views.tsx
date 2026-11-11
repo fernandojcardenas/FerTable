@@ -3,22 +3,24 @@
 import { useMemo, useState } from "react";
 import type { Attachment, CellValue, Field, FormConfig, Row, SelectChoice, View } from "@/shared/types";
 import { isAnswered, missingAnswers, questionHelp, questionLabel, requiredIds } from "@/shared/forms";
-import { PUBLIC_TYPES } from "@/shared/publicForm";
+import { newPublicToken, PUBLIC_TYPES } from "@/shared/publicForm";
 import { isReadOnly, isImage } from "@/shared/fieldTypes";
 import { viewRows, visibleFields } from "@/shared/query";
+import { recordColor, searchRows } from "@/shared/viewTools";
 import { newId } from "@/shared/ids";
 import { CellContent, ChoiceChip, FieldIcon, useBase } from "./common";
 import { FieldInput } from "./inputs";
 import { prefillFromFilters } from "./prefill";
 
 /** A record card showing the primary field and a few others. */
-function RecordCard({ row, fields, coverFieldId, onDragStart }: { row: Row; fields: Field[]; coverFieldId?: string | null; onDragStart?: (e: React.DragEvent) => void }) {
+export function RecordCard({ row, fields, coverFieldId, onDragStart, view }: { row: Row; fields: Field[]; coverFieldId?: string | null; onDragStart?: (e: React.DragEvent) => void; view?: View }) {
   const { snap, openRecord } = useBase();
   const c = snap.computer;
+  const color = view ? recordColor(c, row, view.config.colors) : null;
   const shown = fields.filter((f) => f.id !== coverFieldId && c.display(row, f) !== "").slice(0, 4);
   const cover = coverFieldId ? ((row.cells[coverFieldId] as Attachment[] | undefined) ?? []).find(isImage) : undefined;
   return (
-    <div className="card" draggable={Boolean(onDragStart)} onDragStart={onDragStart} onClick={() => openRecord(row.id)}
+    <div className={`card ${color ? "colored" : ""}`} style={color ? { ["--card-color" as string]: `var(--s-${color})` } : undefined} draggable={Boolean(onDragStart)} onDragStart={onDragStart} onClick={() => openRecord(row.id)}
       role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && openRecord(row.id)}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {cover && <img className="card-cover" src={cover.url} alt={cover.name} loading="lazy" draggable={false} />}
@@ -33,10 +35,11 @@ function RecordCard({ row, fields, coverFieldId, onDragStart }: { row: Row; fiel
   );
 }
 
-function useViewData(view: View) {
-  const { snap } = useBase();
+export function useViewData(view: View) {
+  const { snap, search } = useBase();
   const table = snap.state.tables[view.tableId];
-  const rows = useMemo(() => viewRows(snap.computer, snap.state, view), [snap, view]);
+  const all = useMemo(() => viewRows(snap.computer, snap.state, view), [snap, view]);
+  const rows = useMemo(() => searchRows(snap.computer, all, visibleFields(snap.state, view), search), [snap, all, view, search]);
   const fields = useMemo(() => visibleFields(snap.state, view).filter((f) => f.id !== table.primaryFieldId), [snap.state, view, table]);
   return { table, rows, fields };
 }
@@ -101,7 +104,7 @@ export function KanbanView({ view }: { view: View }) {
               <button className="btn ghost small" onClick={() => add(col.id)} aria-label={`Add record to ${col.choice?.name ?? "Uncategorized"}`}>＋</button>
             </div>
             {colRows.map((r) => (
-              <RecordCard key={r.id} row={r} fields={cardFields} coverFieldId={view.config.kanban?.coverFieldId}
+              <RecordCard key={r.id} row={r} fields={cardFields} view={view} coverFieldId={view.config.kanban?.coverFieldId}
                 onDragStart={(e) => { e.dataTransfer.setData("text/gridbase-row", r.id); e.dataTransfer.effectAllowed = "move"; }} />
             ))}
           </div>
@@ -118,7 +121,7 @@ export function GalleryView({ view }: { view: View }) {
   if (rows.length === 0) return <p className="muted" style={{ padding: 16 }}>No records to show.</p>;
   return (
     <div className="gallery">
-      {rows.map((r) => <RecordCard key={r.id} row={r} fields={fields} coverFieldId={view.config.gallery?.coverFieldId} />)}
+      {rows.map((r) => <RecordCard key={r.id} row={r} fields={fields} view={view} coverFieldId={view.config.gallery?.coverFieldId} />)}
     </div>
   );
 }
@@ -223,6 +226,7 @@ export function CalendarView({ view }: { view: View }) {
               </div>
               {list.slice(0, 4).map((r) => (
                 <button key={r.id} className="cal-event" draggable={editable}
+                  style={(() => { const col = recordColor(snap.computer, r, view.config.colors); return col ? { borderLeft: `4px solid var(--s-${col})` } : undefined; })()}
                   onDragStart={(e) => e.dataTransfer.setData("text/gridbase-row", r.id)}
                   onClick={() => openRecord(r.id)}>{snap.computer.primaryName(r.id)}</button>
               ))}
@@ -377,10 +381,6 @@ export function FormView({ view }: { view: View }) {
 }
 
 /** A long random code for a public link (about 190 bits). */
-function newPublicToken(): string {
-  const A = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => A[b % 62]).join("");
-}
 
 /** Turn the public link on or off, or replace it so the old one stops working. */
 function PublicLinkSettings({ form, fields, onChange }: { form: FormConfig; fields: Field[]; onChange: (token: string | null) => void }) {

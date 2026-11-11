@@ -1,5 +1,6 @@
 "use client";
 
+import { readXlsx, type Sheet } from "../xlsx";
 import { useMemo, useRef, useState } from "react";
 import type { Action, CellValue, Field, FieldOptions, FieldType, SelectChoice } from "@/shared/types";
 import { FIELD_TYPES, isReadOnly } from "@/shared/fieldTypes";
@@ -53,17 +54,32 @@ export function ImportDialog({ tableId, onClose, onCreated }: { tableId?: string
     }));
   }
 
+  const [sheets, setSheets] = useState<Sheet[] | null>(null);
+
+  function use(parsed: string[][], name: string) {
+    if (parsed.length === 0) return setError("That file has no rows.");
+    if (parsed.length > MAX_ROWS + 1) return setError(`That file has more than ${MAX_ROWS.toLocaleString()} rows.`);
+    setTableName(name.slice(0, 100) || "Imported");
+    setRows(parsed);
+    setup(parsed, hasHeader);
+  }
+
   async function load(file: File) {
     setError(null);
     if (file.size > MAX_BYTES) return setError("That file is larger than 50 MB.");
-    const text = await file.text();
-    const parsed = parseCsv(text);
-    if (parsed.length === 0) return setError("That file has no rows.");
-    if (parsed.length > MAX_ROWS + 1) return setError(`That file has more than ${MAX_ROWS.toLocaleString()} rows.`);
     setFileName(file.name);
-    setTableName(file.name.replace(/\.(csv|tsv|txt)$/i, "").slice(0, 100) || "Imported");
-    setRows(parsed);
-    setup(parsed, hasHeader);
+    if (/\.xlsx$/i.test(file.name)) {
+      try {
+        const list = await readXlsx(file, MAX_ROWS + 1);
+        setSheets(list.length > 1 ? list : null);
+        return use(list[0].rows, list.length > 1 ? list[0].name : file.name.replace(/\.xlsx$/i, ""));
+      } catch (e) {
+        return setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (/\.xls$/i.test(file.name)) return setError("Old .xls files can't be read. Save it as .xlsx or CSV and try again.");
+    setSheets(null);
+    use(parseCsv(await file.text()), file.name.replace(/\.(csv|tsv|txt)$/i, ""));
   }
 
   const setCol = (i: number, patch: Partial<Column>) => setColumns((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -168,7 +184,7 @@ export function ImportDialog({ tableId, onClose, onCreated }: { tableId?: string
 
   const used = target ? columns.filter((c) => c.target !== "skip").length : columns.filter((c) => c.type !== "skip").length;
   return (
-    <Dialog wide title={target ? `Import CSV into ${target.name}` : "Import CSV as a new table"} onClose={onClose}
+    <Dialog wide title={target ? `Import into ${target.name}` : "Import a CSV or Excel file as a new table"} onClose={onClose}
       footer={<>
         {progress && <span className="muted small">{progress}</span>}
         <span className="spacer" />
@@ -181,10 +197,10 @@ export function ImportDialog({ tableId, onClose, onCreated }: { tableId?: string
         <div className={`att-editor ${over ? "drop" : ""}`} style={{ padding: 24, alignItems: "center", textAlign: "center", border: "1px dashed var(--line-strong)" }}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) void load(f); }}>
-          <p style={{ margin: 0 }}>Drop a CSV file here, or</p>
+          <p style={{ margin: 0 }}>Drop a CSV or Excel (.xlsx) file here, or</p>
           <button className="btn primary" onClick={() => inputRef.current?.click()}>Choose a file</button>
           <span className="muted small">Comma, semicolon or tab separated · up to 50 MB</span>
-          <input ref={inputRef} type="file" hidden accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" aria-label="Choose a CSV file"
+          <input ref={inputRef} type="file" hidden accept=".csv,.tsv,.txt,.xlsx,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Choose a CSV or Excel file"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void load(f); e.target.value = ""; }} />
           {error && <p role="alert" className="small" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>}
         </div>
@@ -192,6 +208,11 @@ export function ImportDialog({ tableId, onClose, onCreated }: { tableId?: string
         <div className="stack">
           <div className="row" style={{ flexWrap: "wrap" }}>
             <strong>{fileName}</strong>
+            {sheets && (
+              <select className="select" style={{ width: 160 }} aria-label="Sheet" onChange={(e) => { const sh = sheets[Number(e.target.value)]; if (sh) use(sh.rows, sh.name); }}>
+                {sheets.map((sh, i) => <option key={i} value={i}>{sh.name}</option>)}
+              </select>
+            )}
             <span className="muted small">{dataRows.length.toLocaleString()} rows · {columns.length} columns</span>
             <span className="spacer" />
             <label className="row small"><input type="checkbox" checked={hasHeader} onChange={(e) => { setHasHeader(e.target.checked); setup(rows, e.target.checked); }} /> First row has column names</label>

@@ -19,12 +19,15 @@ export const SESSION_COOKIE = "gb_session";
 const SESSION_DAYS = 30;
 export const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3, owner: 4 };
 
-export type User = { id: string; email: string; name: string; verified: boolean };
+export type User = { id: string; email: string; name: string; verified: boolean; admin?: boolean };
 
 /** Set GRIDBASE_VERIFY_EMAIL=false to skip email confirmation (every account counts as confirmed). */
 export const verifyEmailRequired = () => process.env.GRIDBASE_VERIFY_EMAIL !== "false";
 
-export const USER_COLS = "u.id, u.email, u.name, (u.email_verified_at is not null) as verified";
+export const USER_COLS = "u.id, u.email, u.name, (u.email_verified_at is not null) as verified, u.is_admin as admin";
+
+/** With single sign-on set to "only", password sign-in and sign-up are off. */
+export const ssoOnly = () => process.env.GRIDBASE_OIDC_ONLY === "true" && Boolean(process.env.GRIDBASE_OIDC_ISSUER);
 
 export class AuthError extends Error {
   constructor(public status: 401 | 403 | 404 | 409 | 422 | 429, message: string) {
@@ -86,8 +89,9 @@ export function rateLimit(key: string, max: number) {
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
-async function createSession(userId: string): Promise<string> {
+export async function createSession(userId: string): Promise<string> {
   const db = await getDb();
+  await db.query("update users set last_login_at = now() where id = $1", [userId]);
   const token = randomBytes(32).toString("base64url");
   await db.query("insert into sessions (token_hash, user_id, expires_at) values ($1, $2, now() + ($3 || ' days')::interval)", [tokenHash(token), userId, String(SESSION_DAYS)]);
   return token;
@@ -114,7 +118,7 @@ export async function userFromCookie(cookieHeader: string | undefined): Promise<
   if (!token || token.length > 100) return null;
   const db = await getDb();
   const { rows } = await db.query<User>(
-    `select ${USER_COLS} from sessions s join users u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now()`,
+    `select ${USER_COLS} from sessions s join users u on u.id = s.user_id where s.token_hash = $1 and s.expires_at > now() and u.disabled_at is null`,
     [tokenHash(token)],
   );
   return rows[0] ?? null;
@@ -125,6 +129,7 @@ export async function userFromCookie(cookieHeader: string | undefined): Promise<
 export async function signup(emailIn: unknown, nameIn: unknown, passwordIn: unknown, ip: string): Promise<{ user: User; token: string }> {
   rateLimit(`signup:${ip}`, 20);
   if (process.env.GRIDBASE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
+  if (ssoOnly()) throw new AuthError(403, "Accounts on this server are made by signing in with single sign-on");
   const email = normalizeEmail(emailIn);
   const password = checkPassword(passwordIn);
   const name = String(nameIn ?? "").trim().slice(0, 100) || email.split("@")[0];
@@ -136,8 +141,10 @@ export async function signup(emailIn: unknown, nameIn: unknown, passwordIn: unkn
       // The first account is whoever set up this server; there's nobody to impersonate yet.
       const { rows: any } = await q.query<{ n: number }>("select count(*)::int as n from users");
       user.verified = !verifyEmailRequired() || any[0].n === 0;
-      await q.query("insert into users (id, email, name, password_hash, email_verified_at) values ($1, $2, $3, $4, $5)",
-        [user.id, email, name, hash, user.verified ? new Date().toISOString() : null]);
+      // The first account also runs the server (admin page, audit log).
+      user.admin = any[0].n === 0;
+      await q.query("insert into users (id, email, name, password_hash, email_verified_at, is_admin) values ($1, $2, $3, $4, $5, $6)",
+        [user.id, email, name, hash, user.verified ? new Date().toISOString() : null, user.admin]);
       // Invitations sent to this email become memberships once the address is confirmed.
       if (user.verified) await claimInvites(q, user.id, email);
       // Bases made before accounts existed have no owner; the first person to sign up gets them.
@@ -158,12 +165,14 @@ export async function login(emailIn: unknown, passwordIn: unknown, ip: string): 
   const email = normalizeEmail(emailIn);
   rateLimit(`login:${email}`, 10);
   const db = await getDb();
-  const { rows } = await db.query<User & { password_hash: string }>(`select ${USER_COLS}, u.password_hash from users u where u.email = $1`, [email]);
+  if (ssoOnly()) throw new AuthError(403, "Sign in with single sign-on");
+  const { rows } = await db.query<User & { password_hash: string; disabled: boolean }>(`select ${USER_COLS}, u.password_hash, (u.disabled_at is not null) as disabled from users u where u.email = $1`, [email]);
   const row = rows[0];
   const ok = await verifyPassword(String(passwordIn ?? ""), row?.password_hash ?? (await dummyHash));
   if (!row || !ok) throw new AuthError(401, "That email and password don't match");
+  if (row.disabled) throw new AuthError(403, "This account has been turned off. Ask the server's admin.");
   attempts.delete(`login:${email}`);
-  return { user: { id: row.id, email: row.email, name: row.name, verified: row.verified }, token: await createSession(row.id) };
+  return { user: { id: row.id, email: row.email, name: row.name, verified: row.verified, admin: row.admin }, token: await createSession(row.id) };
 }
 
 export async function logout(cookieHeader: string | undefined): Promise<void> {
@@ -177,7 +186,7 @@ export async function logout(cookieHeader: string | undefined): Promise<void> {
 
 export async function roleFor(userId: string, baseId: string): Promise<Role | null> {
   const db = await getDb();
-  const { rows } = await db.query<{ role: Role }>("select role from base_members where base_id = $1 and user_id = $2", [baseId, userId]);
+  const { rows } = await db.query<{ role: Role }>("select role from access where base_id = $1 and user_id = $2", [baseId, userId]);
   return rows[0]?.role ?? null;
 }
 
@@ -414,4 +423,68 @@ export async function confirmEmail(tokenIn: unknown, ip: string): Promise<User> 
     await claimInvites(q, user.id, user.email);
   });
   return { ...user, verified: true };
+}
+
+// ---- single sign-on ----
+
+/**
+ * Sign in someone the identity provider vouched for. An existing account with the same
+ * email is used (and counts as confirmed when the provider confirmed the email); otherwise
+ * an account is made, with an unusable password.
+ */
+export async function loginWithSso(emailIn: string, nameIn: string, emailVerified: boolean): Promise<{ user: User; token: string; created: boolean }> {
+  const email = normalizeEmail(emailIn);
+  const db = await getDb();
+  const { rows } = await db.query<User & { disabled: boolean }>(`select ${USER_COLS}, (u.disabled_at is not null) as disabled from users u where u.email = $1`, [email]);
+  if (rows[0]) {
+    if (rows[0].disabled) throw new AuthError(403, "This account has been turned off. Ask the server's admin.");
+    // Only an email the provider confirmed may take over an account that was made with a password.
+    if (!emailVerified) throw new AuthError(403, "Your identity provider didn't confirm this email address");
+    if (!rows[0].verified) {
+      await db.query("update users set email_verified_at = now() where id = $1", [rows[0].id]);
+      await db.tx((q) => claimInvites(q, rows[0].id, email));
+    }
+    return { user: { ...rows[0], verified: true }, token: await createSession(rows[0].id), created: false };
+  }
+  if (process.env.GRIDBASE_ALLOW_SIGNUP === "false") throw new AuthError(403, "Sign-up is turned off on this server");
+  const user: User = { id: newId("usr"), email, name: nameIn.trim().slice(0, 100) || email.split("@")[0], verified: emailVerified };
+  const hash = await hashPassword(randomBytes(32).toString("base64"));
+  await db.tx(async (q) => {
+    const { rows: any } = await q.query<{ n: number }>("select count(*)::int as n from users");
+    user.admin = any[0].n === 0;
+    await q.query("insert into users (id, email, name, password_hash, email_verified_at, is_admin) values ($1, $2, $3, $4, $5, $6)",
+      [user.id, email, user.name, hash, emailVerified ? new Date().toISOString() : null, user.admin]);
+    if (emailVerified) await claimInvites(q, user.id, email);
+  });
+  return { user, token: await createSession(user.id), created: true };
+}
+
+// ---- admin ----
+
+export async function requireAdmin(user: User) {
+  if (!user.admin) throw new AuthError(404, "Not found");
+}
+
+export async function listUsers() {
+  const db = await getDb();
+  const { rows } = await db.query<{ id: string; email: string; name: string; verified: boolean; admin: boolean; created_at: Date | string; last_login_at: Date | string | null; disabled_at: Date | string | null; bases: number }>(
+    `select ${USER_COLS}, u.created_at, u.last_login_at, u.disabled_at,
+       (select count(*)::int from base_members m where m.user_id = u.id) as bases
+     from users u order by u.created_at`);
+  const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
+  return rows.map((r) => ({ id: r.id, email: r.email, name: r.name, verified: r.verified, admin: r.admin, createdAt: iso(r.created_at), lastLoginAt: iso(r.last_login_at), disabled: Boolean(r.disabled_at), bases: r.bases }));
+}
+
+/** Make or unmake an admin, or turn an account off (which signs it out everywhere) or back on. */
+export async function updateUser(actor: User, userId: string, patch: { admin?: unknown; disabled?: unknown }) {
+  if (userId === actor.id && (patch.admin === false || patch.disabled === true)) throw new AuthError(422, "You can't remove your own admin access or turn off your own account");
+  const db = await getDb();
+  if (typeof patch.admin === "boolean") await db.query("update users set is_admin = $2 where id = $1", [userId, patch.admin]);
+  if (patch.disabled === true) {
+    await db.query("update users set disabled_at = now() where id = $1", [userId]);
+    await db.query("delete from sessions where user_id = $1", [userId]);
+    await db.query("delete from api_tokens where user_id = $1", [userId]);
+  } else if (patch.disabled === false) {
+    await db.query("update users set disabled_at = null where id = $1", [userId]);
+  }
 }

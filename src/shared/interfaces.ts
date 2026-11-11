@@ -1,6 +1,6 @@
 // Data for interface elements: which records an element uses, totals, chart groups and map points.
 
-import type { Aggregate, BaseState, ElementSource, Field, InterfacePage, PageElement, Row } from "./types";
+import type { Aggregate, BaseState, ElementSource, Field, InterfacePage, PageControl, PageElement, Row } from "./types";
 import { CellError, Computer } from "./compute";
 import { viewRows } from "./query";
 import { newId } from "./ids";
@@ -8,12 +8,50 @@ import { newId } from "./ids";
 export const PIE_MAX = 8;
 export const BAR_MAX = 30;
 
-export function sourceRows(c: Computer, state: BaseState, src: ElementSource): Row[] {
+/** Narrows an element's records by the page's viewer filters (identity when none are set). */
+export type Narrow = (tableId: string, rows: Row[]) => Row[];
+
+export function sourceRows(c: Computer, state: BaseState, src: ElementSource, narrow?: Narrow): Row[] {
   const t = state.tables[src.tableId];
   if (!t) return [];
   const view = src.viewId ? state.views[src.viewId] : undefined;
-  if (view && view.tableId === t.id) return viewRows(c, state, view);
-  return t.rowOrder.map((id) => state.rows[id]).filter(Boolean);
+  const rows = view && view.tableId === t.id ? viewRows(c, state, view) : t.rowOrder.map((id) => state.rows[id]).filter(Boolean);
+  return narrow ? narrow(t.id, rows) : rows;
+}
+
+/** Choices a viewer filter offers: select options, people, yes/no; other fields filter by text. */
+export function controlChoices(c: Computer, state: BaseState, ctl: PageControl): { value: string; label: string }[] | null {
+  const f = state.fields[ctl.fieldId];
+  if (!f) return null;
+  if (f.type === "singleSelect" || f.type === "multiSelect") return (f.options.choices ?? []).map((ch) => ({ value: ch.id, label: ch.name }));
+  if (f.type === "checkbox") return [{ value: "checked", label: "Checked" }, { value: "unchecked", label: "Not checked" }];
+  if (f.type === "user") return Object.entries(state.people ?? {}).map(([id, p]) => ({ value: id, label: p.name }));
+  if (f.type === "link") {
+    const t = state.tables[f.options.linkedTableId ?? ""];
+    return t ? t.rowOrder.slice(0, 500).map((id) => ({ value: id, label: c.primaryName(id) })) : null;
+  }
+  return null;
+}
+
+/** Apply viewer filter values (by control id; "" or missing = any). */
+export function narrowBy(c: Computer, state: BaseState, controls: PageControl[], values: Record<string, string>): Narrow {
+  const active = controls.filter((ctl) => values[ctl.id]);
+  if (!active.length) return (_t, rows) => rows;
+  return (tableId, rows) => {
+    const mine = active.filter((ctl) => ctl.tableId === tableId && state.fields[ctl.fieldId]);
+    if (!mine.length) return rows;
+    return rows.filter((r) => mine.every((ctl) => {
+      const f = state.fields[ctl.fieldId];
+      const want = values[ctl.id];
+      const raw = r.cells[f.id];
+      switch (f.type) {
+        case "singleSelect": return raw === want;
+        case "multiSelect": case "user": case "link": return Array.isArray(raw) && (raw as string[]).includes(want);
+        case "checkbox": return want === "checked" ? raw === true : raw !== true;
+        default: return c.display(r, f).toLowerCase().includes(want.toLowerCase());
+      }
+    }));
+  };
 }
 
 const num = (v: unknown): number | null => {
@@ -51,8 +89,8 @@ export type ChartPoint = { key: string; label: string; value: number; rowIds: st
  * Bars and lines keep the field's order (dates and numbers ascending); pies go largest first.
  * Past the limit, the smallest groups fold into "Other".
  */
-export function chartData(c: Computer, state: BaseState, el: Extract<PageElement, { kind: "chart" }>): ChartPoint[] {
-  const rows = sourceRows(c, state, el.source);
+export function chartData(c: Computer, state: BaseState, el: Extract<PageElement, { kind: "chart" }>, narrow?: Narrow): ChartPoint[] {
+  const rows = sourceRows(c, state, el.source, narrow);
   const group = state.fields[el.groupFieldId];
   const value = el.fieldId ? state.fields[el.fieldId] : undefined;
   if (!group) return [];
@@ -99,8 +137,8 @@ export function chartData(c: Computer, state: BaseState, el: Extract<PageElement
 export type MapPoint = { rowId: string; lat: number; lng: number; label: string };
 
 /** Points for a map: "lat, lng" in one text field, or latitude and longitude in two number fields. */
-export function mapPoints(c: Computer, state: BaseState, el: Extract<PageElement, { kind: "map" }>): { points: MapPoint[]; skipped: number } {
-  const rows = sourceRows(c, state, el.source);
+export function mapPoints(c: Computer, state: BaseState, el: Extract<PageElement, { kind: "map" }>, narrow?: Narrow): { points: MapPoint[]; skipped: number } {
+  const rows = sourceRows(c, state, el.source, narrow);
   const locF = state.fields[el.locationFieldId];
   const lngF = el.lngFieldId ? state.fields[el.lngFieldId] : undefined;
   const labelF = el.labelFieldId ? state.fields[el.labelFieldId] : undefined;

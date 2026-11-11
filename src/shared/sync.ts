@@ -45,7 +45,7 @@ export const sourceLabel = (source: BaseState, view: View) => `${source.base.nam
  * The sync.apply action that makes `targetTable` match the source view now, or null
  * when nothing would change (so two bases syncing from each other can't loop forever).
  */
-export function buildSync(source: BaseState, view: View, target: BaseState, targetTable: Table, now = new Date()): Action | null {
+export function buildSync(source: BaseState, view: View, target: BaseState, targetTable: Table, now = new Date(), label?: string): Action | null {
   const sourceTable = source.tables[view.tableId];
   const c = new Computer(source, now);
   const existing = new Map<string, Field>();
@@ -81,7 +81,7 @@ export function buildSync(source: BaseState, view: View, target: BaseState, targ
     const r = target.rows[id];
     return r?.sourceRowId && !keep.has(r.sourceRowId);
   });
-  const action: Action = { type: "sync.apply", tableId: targetTable.id, fields: defs, removeFieldIds, upserts, deleteRowIds, sourceLabel: sourceLabel(source, view), error: null };
+  const action: Action = { type: "sync.apply", tableId: targetTable.id, fields: defs, removeFieldIds, upserts, deleteRowIds, sourceLabel: label ?? sourceLabel(source, view), error: null };
   return changes(target, targetTable, action) ? action : null;
 }
 

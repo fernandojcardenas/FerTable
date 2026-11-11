@@ -162,6 +162,74 @@ create table if not exists row_history (
 );
 alter table row_history add column if not exists snapshot jsonb;
 create index if not exists row_history_deleted on row_history(base_id, kind, txn);
+create table if not exists workspaces (
+  id text primary key,
+  name text not null,
+  created_by text references users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create table if not exists workspace_members (
+  workspace_id text not null references workspaces(id) on delete cascade,
+  user_id text not null references users(id) on delete cascade,
+  role text not null check (role in ('owner', 'editor', 'commenter', 'viewer')),
+  primary key (workspace_id, user_id)
+);
+alter table bases add column if not exists workspace_id text references workspaces(id) on delete set null;
+create table if not exists notifications (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  base_id text references bases(id) on delete cascade,
+  kind text not null,
+  title text not null,
+  body text not null default '',
+  link text,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+create index if not exists notifications_user on notifications(user_id, created_at desc);
+create table if not exists base_snapshots (
+  id text primary key,
+  base_id text not null references bases(id) on delete cascade,
+  name text not null,
+  auto boolean not null default false,
+  txn integer not null,
+  created_by text references users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  data jsonb not null
+);
+create index if not exists snapshots_base on base_snapshots(base_id, created_at desc);
+create table if not exists audit_log (
+  id serial primary key,
+  at timestamptz not null default now(),
+  user_id text,
+  user_email text,
+  ip text,
+  action text not null,
+  base_id text,
+  detail jsonb not null default '{}'::jsonb
+);
+create index if not exists audit_at on audit_log(at desc);
+alter table users add column if not exists is_admin boolean not null default false;
+alter table users add column if not exists last_login_at timestamptz;
+alter table users add column if not exists disabled_at timestamptz;
+create table if not exists external_syncs (
+  table_id text primary key,
+  base_id text not null references bases(id) on delete cascade,
+  url text not null
+);
+-- Everyone's role in every base: their own membership or their workspace's, whichever is higher.
+create or replace view access as
+  select base_id, user_id,
+    (array_agg(role order by case role when 'owner' then 4 when 'editor' then 3 when 'commenter' then 2 else 1 end desc))[1] as role
+  from (
+    select base_id, user_id, role from base_members
+    union all
+    select b.id as base_id, w.user_id, w.role from bases b join workspace_members w on w.workspace_id = b.workspace_id
+  ) x
+  group by base_id, user_id;
+-- The first account is the server's admin (for audit logs and user management).
+update users set is_admin = true
+  where id = (select id from users order by created_at limit 1) and not exists (select 1 from users where is_admin);
 create index if not exists members_user on base_members(user_id);
 create index if not exists sessions_user on sessions(user_id);
 create index if not exists tables_base on tables_(base_id);

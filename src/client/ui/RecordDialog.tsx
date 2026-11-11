@@ -8,6 +8,7 @@ import { FieldInput } from "./inputs";
 import { cellActions } from "./actions";
 import { ActivityPanel } from "./Comments";
 import { RegenerateButton } from "./newFields";
+import { canAddRecords, canEditField } from "./permissions";
 
 export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () => void }) {
   const { snap, client, openFieldDialog } = useBase();
@@ -45,7 +46,7 @@ export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () =>
           <span className="muted small">Created {formatDate(row.createdAt, true)} · #{row.autoNumber}</span>
           <span className="spacer" />
           <button className="btn" onClick={() => void copyLink()}>{copied ? "Link copied" : "🔗 Copy link"}</button>
-          {canEdit && <button className="btn danger" onClick={() => { if (client.dispatch({ type: "row.delete", rowIds: [row.id] })) onClose(); }}>Delete record</button>}
+          {canEdit && canAddRecords(snap, table) && !table.sync && <button className="btn danger" onClick={() => { if (client.dispatch({ type: "row.delete", rowIds: [row.id] })) onClose(); }}>Delete record</button>}
           <button className="btn primary" onClick={onClose}>Done</button>
         </>
       }
@@ -54,9 +55,9 @@ export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () =>
         <div className="record-fields">
           {fields.map((f) => (
             <div key={f.id} className="record-field">
-              <div className="name"><FieldIcon field={f} /> {f.name}</div>
+              <div className="name"><FieldIcon field={f} /> {f.name}{f.editableBy && <span className="muted small" title="Only some people can change this field"> 🔒</span>}</div>
               <div style={{ minWidth: 0 }}>
-                {isReadOnly(f) || !canEdit ? (
+                {isReadOnly(f) || !canEdit || !canEditField(snap, f) ? (
                   <div style={{ padding: "6px 0", whiteSpace: "pre-wrap" }}>
                     <CellContent row={row} field={f} detailed />
                     {f.type === "ai" && <div style={{ marginTop: 4 }}><RegenerateButton field={f} rowIds={[row.id]} /></div>}

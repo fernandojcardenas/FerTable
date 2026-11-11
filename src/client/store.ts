@@ -9,6 +9,7 @@ import { applyAction, applyActions } from "@/shared/reducer";
 import { describeActions, inversePatch, isEmptyPatch } from "@/shared/history";
 import { Computer } from "@/shared/compute";
 import { newId } from "@/shared/ids";
+import { permissionProblem } from "@/shared/permissions";
 
 type Pending = { requestId: string; actions: Action[]; sent: boolean; ackTxn: number | null };
 
@@ -35,6 +36,8 @@ export type ClientSnapshot = {
   undoLabel: string | null;
   redoLabel: string | null;
   role: Role;
+  /** The signed-in user. */
+  userId: string | null;
   /** Number of comments per record, kept live. */
   commentCounts: Record<string, number>;
   version: number;
@@ -112,6 +115,7 @@ export class BaseClient {
       undoLabel: this.undoStack.at(-1)?.label ?? null,
       redoLabel: this.redoStack.at(-1)?.label ?? null,
       role: this.role,
+      userId: this.me,
       commentCounts: this.commentCounts,
       version: ++this.version,
     };
@@ -150,8 +154,15 @@ export class BaseClient {
     return true;
   }
 
+  /** Show a short error message. */
+  showError(message: string) {
+    this.setError(message);
+  }
+
   dispatchWith(opts: DispatchOptions, ...actions: Action[]): boolean {
     if (!this.ensureCanEdit()) return false;
+    const problem = permissionProblem(this.snapshot.state, actions, this.me, this.role);
+    if (problem) { this.setError(problem); return false; }
     const result = this.tryApply(actions);
     if (!result) return false;
     this.record(result.before, result.after, actions, opts);
@@ -328,6 +339,10 @@ export class BaseClient {
         for (const l of this.commentListeners) l(msg);
         return;
       }
+      case "notification":
+        // The bell listens for this and reloads.
+        window.dispatchEvent(new Event("gridbase:notification"));
+        return;
       case "access":
         if (msg.role === null) {
           this.status = "revoked";

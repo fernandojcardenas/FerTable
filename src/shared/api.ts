@@ -25,7 +25,8 @@ export function apiValue(state: BaseState, c: Computer, row: Row, f: Field): unk
     case "singleSelect": return choiceName(f, row.cells[f.id]);
     case "multiSelect": return ((row.cells[f.id] as string[] | undefined) ?? []).map((id) => choiceName(f, id)).filter(Boolean);
     case "user": { const ids = v as string[]; return f.options.multiple ? ids.map((id) => person(state, id)) : person(state, ids[0]); }
-    case "lastModifiedBy": return typeof v === "string" ? person(state, v) : undefined;
+    case "lastModifiedBy": return row.modifiedBy ? person(state, row.modifiedBy) : typeof v === "string" ? { id: null, name: v, email: null } : undefined;
+    case "createdBy": return row.createdBy ? person(state, row.createdBy) : typeof v === "string" ? { id: null, name: v, email: null } : undefined;
     case "attachment": return (v as unknown as { id: string; name: string; size: number; type: string; url: string }[]).map((a) => ({ id: a.id, url: a.url, filename: a.name, size: a.size, type: a.type }));
     case "button": return { label: f.options.button?.label ?? "", ...(f.options.button?.kind === "url" ? { url: c.display(row, f) || null } : {}) };
     default: return v;

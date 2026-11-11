@@ -15,6 +15,9 @@ export function SyncDialog({ onClose, onCreated }: { onClose: () => void; onCrea
   const [viewId, setViewId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [from, setFrom] = useState<"base" | "url">("base");
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
 
   useEffect(() => {
     fetch(`/api/bases/${snap.state.base.id}/sync-sources`, { cache: "no-store" })
@@ -29,7 +32,8 @@ export function SyncDialog({ onClose, onCreated }: { onClose: () => void; onCrea
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch(`/api/bases/${snap.state.base.id}/syncs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sourceBaseId: baseId, sourceViewId: viewId }) });
+      const body = from === "url" ? { url, name } : { sourceBaseId: baseId, sourceViewId: viewId };
+      const r = await fetch(`/api/bases/${snap.state.base.id}/syncs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error ?? "Couldn't set up the sync");
       onCreated(d.tableId);
@@ -42,9 +46,24 @@ export function SyncDialog({ onClose, onCreated }: { onClose: () => void; onCrea
   }
 
   return (
-    <Dialog title="Sync a table from another base" onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!viewId || busy} onClick={() => void create()}>{busy ? "Syncing…" : "Create synced table"}</button></>}>
+    <Dialog title="Sync a table" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={(from === "base" ? !viewId : !url.trim()) || busy} onClick={() => void create()}>{busy ? "Syncing…" : "Create synced table"}</button></>}>
       <div className="stack">
+        <span className="mode-switch" role="tablist" aria-label="Sync from" style={{ alignSelf: "flex-start" }}>
+          <button role="tab" aria-selected={from === "base"} className={from === "base" ? "on" : ""} onClick={() => setFrom("base")}>Another base</button>
+          <button role="tab" aria-selected={from === "url"} className={from === "url" ? "on" : ""} onClick={() => setFrom("url")}>Google Sheet or CSV link</button>
+        </span>
+        {from === "url" ? (
+          <>
+            <p className="muted small" style={{ margin: 0 }}>
+              Paste a Google Sheets link (share the sheet so <b>anyone with the link can view</b> it) or the https address of a CSV file.
+              The first row names the fields and the first column identifies each record. It refreshes every 15 minutes, or with Sync now.
+            </p>
+            <label className="field-label">Link<input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" /></label>
+            <label className="field-label">Table name (optional)<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          </>
+        ) : (
+        <>
         <p className="muted small" style={{ margin: 0 }}>
           The records and visible fields of a grid view are copied here and kept up to date. The copy is read-only, but you can add your own fields
           to it. Everyone in this base will see the synced data, so you need editor access to the source base.
@@ -75,6 +94,8 @@ export function SyncDialog({ onClose, onCreated }: { onClose: () => void; onCrea
               </label>
             )}
           </>
+        )}
+        </>
         )}
         {error && <p className="small" style={{ color: "var(--danger)", margin: 0 }}>{error}</p>}
       </div>

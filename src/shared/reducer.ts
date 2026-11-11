@@ -3,10 +3,11 @@
 // It must be deterministic: anything time-based comes from the action itself.
 
 import type {
-  Action, Automation, AutomationStep, BaseState, CellValue, Field, FieldOptions, FieldType, InterfacePage, PageElement, RestorePatch, Row, Table, TableSync, View, ViewConfig, ViewType,
+  Action, Automation, AutomationStep, BaseState, CellValue, EditPermission, Field, FieldOptions, FieldType, InterfacePage, PageElement, PrintItem, RestorePatch, Row, Table, TableSync, View, ViewConfig, ViewType,
 } from "./types";
 import { applyOrderPatch } from "./history";
-import { choicesFromText, coerceValue, defaultOptions, isComputed } from "./fieldTypes";
+import { CHOICE_COLORS, choicesFromText, coerceValue, defaultOptions, isComputed } from "./fieldTypes";
+import { ALL_SUMMARIES, MAX_FROZEN, ROW_HEIGHTS } from "./viewTools";
 import { CellError, Computer } from "./compute";
 import { FormulaError, parseFormula, referencedIds, toText } from "./formula";
 import { isId } from "./ids";
@@ -147,6 +148,8 @@ function validateOptions(d: Draft, tableId: string, fieldId: string, type: Field
       return { precision: Math.min(8, Math.max(0, Math.round(o.precision ?? 0))), format: o.format ?? "decimal", symbol: o.symbol };
     case "date":
       return { includeTime: Boolean(o.includeTime) };
+    case "longText":
+      return o.richText ? { richText: true } : {};
     case "link":
       if (!o.linkedTableId || !d.tables[o.linkedTableId]) fail("Pick a table to link to");
       return { linkedTableId: o.linkedTableId, inverseFieldId: o.inverseFieldId ?? null };
@@ -362,8 +365,58 @@ function checkPage(d: Draft, input: InterfacePage, lenient = false): InterfacePa
     }
     elements.push(e);
   }
-  return { id: input.id, name, elements };
+  const page: InterfacePage = { id: input.id, name, elements };
+  const kind = input.kind ?? "dashboard";
+  if (!["dashboard", "record", "print"].includes(kind)) fail("Unknown page type");
+  if (kind !== "dashboard") page.kind = kind;
+  const tableOk = (id: string | null | undefined) => Boolean(id && d.tables[id]);
+  if (kind === "record" || kind === "print") {
+    if (!tableOk(input.tableId)) { if (!lenient) fail("Pick a table for the page"); }
+    else page.tableId = input.tableId!;
+    page.viewId = input.viewId && page.tableId && d.views[input.viewId]?.tableId === page.tableId ? input.viewId : null;
+    const inTable = (id: string | null | undefined) => Boolean(id && page.tableId && d.fields[id]?.tableId === page.tableId);
+    if (kind === "record") {
+      if (!Array.isArray(input.fieldIds ?? []) || (input.fieldIds ?? []).length > 100) fail("A record page shows up to 100 fields");
+      page.fieldIds = (input.fieldIds ?? []).filter(inTable);
+    } else {
+      page.paper = input.paper === "letter" ? "letter" : "a4";
+      if (!Array.isArray(input.items ?? []) || (input.items ?? []).length > MAX_PRINT_ITEMS) fail(`A print layout holds up to ${MAX_PRINT_ITEMS} items`);
+      const seen = new Set<string>();
+      page.items = [];
+      for (const raw of input.items ?? []) {
+        const it = structuredClone(raw) as PrintItem;
+        if (!isId(it?.id, "prt") || seen.has(it.id)) fail("Each print item needs a unique id");
+        seen.add(it.id);
+        if (!["field", "text", "image", "line"].includes(it.kind)) fail("Unknown print item");
+        for (const k of ["x", "y", "w", "h"] as const) if (typeof it[k] !== "number" || !Number.isFinite(it[k]) || it[k] < 0 || it[k] > 400) fail("A print item's position isn't valid");
+        if ((it.kind === "field" || it.kind === "image") && !inTable(it.fieldId)) { if (lenient) continue; fail("A print item uses a field that isn't in the table"); }
+        it.text = typeof it.text === "string" ? it.text.slice(0, 5000) : "";
+        it.size = Math.min(72, Math.max(6, Number(it.size) || 11));
+        it.bold = Boolean(it.bold);
+        it.label = Boolean(it.label);
+        it.align = it.align === "center" || it.align === "right" ? it.align : "left";
+        page.items.push(it);
+      }
+    }
+  }
+  if (input.controls !== undefined) {
+    if (!Array.isArray(input.controls) || input.controls.length > 8) fail("A page can have up to 8 filters");
+    page.controls = [];
+    for (const ctl of input.controls) {
+      if (!isId(ctl?.id, "ctl")) fail("Invalid filter id");
+      if (!tableOk(ctl.tableId) || d.fields[ctl.fieldId]?.tableId !== ctl.tableId) { if (lenient) continue; fail("A page filter uses a missing field"); }
+      page.controls.push({ id: ctl.id, tableId: ctl.tableId, fieldId: ctl.fieldId });
+    }
+  }
+  if (input.shareToken != null) {
+    if (typeof input.shareToken !== "string" || !PUBLIC_TOKEN_RE.test(input.shareToken)) fail("Invalid public page link");
+    if (kind === "print") fail("Print layouts can't be published");
+    page.shareToken = input.shareToken;
+  }
+  return page;
 }
+
+export const MAX_PRINT_ITEMS = 60;
 
 /** {fldId} placeholders must point at fields in this table. */
 function checkTemplateRefs(d: Draft, tableId: string, template: string) {
@@ -478,7 +531,7 @@ function checkSyncConfig(c: TableSync): TableSync {
   for (const k of ["sourceBaseId", "sourceTableId", "sourceViewId", "createdBy"] as const) {
     if (typeof c?.[k] !== "string" || !SYNC_ID.test(c[k])) fail("The sync settings aren't valid");
   }
-  return { sourceBaseId: c.sourceBaseId, sourceTableId: c.sourceTableId, sourceViewId: c.sourceViewId, createdBy: c.createdBy,
+  return { ...(c.kind === "url" ? { kind: "url" as const } : {}), sourceBaseId: c.sourceBaseId, sourceTableId: c.sourceTableId, sourceViewId: c.sourceViewId, createdBy: c.createdBy,
     sourceLabel: String(c.sourceLabel ?? "").slice(0, 300), lastSyncAt: null, error: null };
 }
 
@@ -602,7 +655,11 @@ function deleteField(d: Draft, fieldId: string, removeInverse: boolean) {
       c.kanban?.coverFieldId === fieldId ||
       c.calendar?.dateFieldId === fieldId ||
       c.gallery?.coverFieldId === fieldId ||
-      c.form?.fieldIds.includes(fieldId);
+      c.form?.fieldIds.includes(fieldId) ||
+      (c.summaries && fieldId in c.summaries) ||
+      JSON.stringify(c.colors ?? null).includes(fieldId) ||
+      JSON.stringify(c.timeline ?? null).includes(fieldId) ||
+      c.list?.nestFieldId === fieldId;
     if (!refs) continue;
     const vc = d.view(viewId).config;
     vc.hiddenFieldIds = vc.hiddenFieldIds.filter((x) => x !== fieldId);
@@ -613,6 +670,11 @@ function deleteField(d: Draft, fieldId: string, removeInverse: boolean) {
     if (vc.kanban?.coverFieldId === fieldId) vc.kanban.coverFieldId = null;
     if (vc.calendar?.dateFieldId === fieldId) vc.calendar.dateFieldId = null;
     if (vc.gallery?.coverFieldId === fieldId) vc.gallery.coverFieldId = null;
+    if (vc.summaries) delete vc.summaries[fieldId];
+    if (vc.colors?.mode === "select" && vc.colors.fieldId === fieldId) vc.colors = null;
+    if (vc.colors?.mode === "conditions") vc.colors.rules = vc.colors.rules.map((r) => ({ ...r, filters: { ...r.filters, conditions: r.filters.conditions.filter((x) => x.fieldId !== fieldId) } }));
+    if (vc.timeline) for (const k of ["startFieldId", "endFieldId", "dependencyFieldId"] as const) if (vc.timeline[k] === fieldId) vc.timeline[k] = null;
+    if (vc.list?.nestFieldId === fieldId) vc.list.nestFieldId = null;
     if (vc.form) {
       vc.form.fieldIds = vc.form.fieldIds.filter((x) => x !== fieldId);
       if (vc.form.requiredFieldIds) vc.form.requiredFieldIds = vc.form.requiredFieldIds.filter((x) => x !== fieldId);
@@ -672,6 +734,11 @@ function defaultConfigFor(d: Draft, tableId: string, type: ViewType, base?: View
   if (type === "calendar" && !c.calendar?.dateFieldId) {
     c.calendar = { dateFieldId: fields.find((f) => f.type === "date")?.id ?? null };
   }
+  if (type === "timeline" && !c.timeline) {
+    const dates = fields.filter((f) => f.type === "date");
+    c.timeline = { startFieldId: dates[0]?.id ?? null, endFieldId: dates[1]?.id ?? null, scale: "week", dependencyFieldId: null };
+  }
+  if (type === "list" && !c.list) c.list = { nestFieldId: null };
   if (type === "form" && !c.form) {
     c.form = {
       title: d.tables[tableId].name,
@@ -704,6 +771,66 @@ function checkForm(f: NonNullable<ViewConfig["form"]>) {
     if (!m || typeof m !== "object" || Array.isArray(m)) fail(`Form ${key} must be a map`);
     for (const v of Object.values(m)) text(v, max, key === "labels" ? "question" : "help text");
   }
+}
+
+const VIEW_TYPES = new Set<ViewType>(["grid", "kanban", "calendar", "gallery", "form", "timeline", "list"]);
+
+/** Someone else's personal view can't be changed. */
+function checkViewOwner(d: Draft, v: View) {
+  if (v.personalFor && d.stamp?.by && v.personalFor !== d.stamp.by) fail("That's someone else's personal view");
+}
+
+function checkPermission(d: Draft, p: EditPermission | null | undefined): EditPermission | null {
+  if (p === null || p === undefined || p === "editors") return null;
+  if (p === "owners") return "owners";
+  if (typeof p === "object" && Array.isArray(p.userIds)) {
+    const ids = [...new Set(p.userIds.filter((x) => isId(x, "usr")))].slice(0, 200);
+    return { userIds: ids };
+  }
+  return fail("Unknown permission");
+}
+
+/** Row height, frozen columns, summaries, colors, timeline and list settings, public link. */
+function checkViewExtras(d: Draft, v: View, c: ViewConfig) {
+  const fieldIn = (id: string | null | undefined, types?: string[]) => {
+    if (!id) return true;
+    const f = d.fields[id];
+    return Boolean(f && f.tableId === v.tableId && (!types || types.includes(f.type)));
+  };
+  if (c.rowHeight !== undefined && !(c.rowHeight in ROW_HEIGHTS)) fail("Unknown row height");
+  if (c.frozenCount !== undefined && (!Number.isInteger(c.frozenCount) || c.frozenCount < 1 || c.frozenCount > MAX_FROZEN)) fail(`Freeze between 1 and ${MAX_FROZEN} columns`);
+  if (c.summaries !== undefined) {
+    if (!c.summaries || typeof c.summaries !== "object") fail("Summaries must be a map");
+    for (const [fid, fn] of Object.entries(c.summaries)) {
+      if (!ALL_SUMMARIES.has(fn)) fail("Unknown summary");
+      if (!fieldIn(fid)) delete c.summaries[fid];
+    }
+  }
+  if (c.colors) {
+    if (c.colors.mode === "select") {
+      if (!fieldIn(c.colors.fieldId, ["singleSelect"])) fail("Color records by a single select field in this table");
+    } else if (c.colors.mode === "conditions") {
+      if (!Array.isArray(c.colors.rules) || c.colors.rules.length > 20) fail("Up to 20 color rules");
+      for (const r of c.colors.rules) {
+        if (!CHOICE_COLORS.includes(r.color)) fail("Unknown color");
+        if (!r.filters || !Array.isArray(r.filters.conditions)) fail("A color rule needs conditions");
+        for (const cond of r.filters.conditions) if (!fieldIn(cond.fieldId)) fail("A color rule checks a field that isn't in this table");
+      }
+    } else fail("Unknown coloring");
+  }
+  if (c.timeline) {
+    const t = c.timeline;
+    const dates = ["date", "createdTime", "lastModifiedTime"];
+    if (!fieldIn(t.startFieldId, dates) || !fieldIn(t.endFieldId, dates)) fail("The timeline needs date fields");
+    if (!["day", "week", "month"].includes(t.scale)) fail("Unknown timeline scale");
+    if (t.dependencyFieldId) {
+      const f = d.fields[t.dependencyFieldId];
+      if (!f || f.tableId !== v.tableId || f.type !== "link" || f.options.linkedTableId !== v.tableId) fail("Dependencies need a link field to this same table");
+    }
+  }
+  if (c.list?.nestFieldId && !fieldIn(c.list.nestFieldId, ["link"])) fail("Nest records by a link field");
+  if (c.shareToken != null && (typeof c.shareToken !== "string" || !PUBLIC_TOKEN_RE.test(c.shareToken))) fail("Invalid public view link");
+  if (c.locked !== undefined && typeof c.locked !== "boolean") fail("Invalid lock setting");
 }
 
 /** `by` is who made the change (a user id, or null for automations, forms and AI); it's stamped on the records it touches. */
@@ -750,6 +877,13 @@ function apply(d: Draft, a: Action, at: string): void {
       d.table(a.tableId).name = name;
       return;
     }
+    case "table.permissions": {
+      const t = d.table(a.tableId);
+      const p = checkPermission(d, a.recordsEditableBy);
+      if (p) t.recordsEditableBy = p;
+      else delete t.recordsEditableBy;
+      return;
+    }
     case "table.delete": {
       const t = d.tables[a.tableId] ?? fail("Table not found");
       if (d.tableOrder.length <= 1) fail("A base needs at least one table");
@@ -792,6 +926,11 @@ function apply(d: Draft, a: Action, at: string): void {
         f.name = name;
       }
       if (a.description !== undefined) f.description = a.description;
+      if (a.editableBy !== undefined) {
+        const p = checkPermission(d, a.editableBy);
+        if (p) f.editableBy = p;
+        else delete f.editableBy;
+      }
       const newType = a.fieldType ?? old.type;
       if (newType === "link" && table.primaryFieldId === f.id) fail("The primary field can't be a link");
       if (a.fieldType !== undefined || a.options !== undefined) {
@@ -839,7 +978,7 @@ function apply(d: Draft, a: Action, at: string): void {
       requireNewId(d, a.rowId, "rec", d.rows);
       const t = d.table(a.tableId);
       const row: Row = { id: a.rowId, tableId: a.tableId, cells: {}, createdAt: a.createdAt ?? at, autoNumber: t.nextAutoNumber };
-      if (d.stamp) { row.modifiedAt = d.stamp.at; row.modifiedBy = d.stamp.by; }
+      if (d.stamp) { row.modifiedAt = d.stamp.at; row.modifiedBy = d.stamp.by; row.createdBy = d.stamp.by; }
       t.nextAutoNumber += 1;
       d.put("rows", row);
       const idx = a.afterRowId ? t.rowOrder.indexOf(a.afterRowId) : -1;
@@ -917,16 +1056,31 @@ function apply(d: Draft, a: Action, at: string): void {
       requireNewId(d, a.viewId, "viw", d.views);
       const name = cleanName(a.name, "View");
       const from = a.copyFromViewId ? d.views[a.copyFromViewId] : undefined;
+      if (!VIEW_TYPES.has(a.viewType)) fail("Unknown view type");
       const config = defaultConfigFor(d, a.tableId, a.viewType, from && from.tableId === a.tableId ? from.config : undefined);
-      d.put("views", { id: a.viewId, tableId: a.tableId, name, type: a.viewType, config });
+      // A copy starts unlocked and without a public link.
+      delete config.locked;
+      delete config.shareToken;
+      const view: View = { id: a.viewId, tableId: a.tableId, name, type: a.viewType, config };
+      if (a.personal) {
+        if (!d.stamp?.by) fail("Only a person can have a personal view");
+        view.personalFor = d.stamp!.by;
+      }
+      d.put("views", view);
       d.table(a.tableId).viewOrder.push(a.viewId);
       return;
     }
     case "view.update": {
+      const old = d.views[a.viewId] ?? fail("View not found");
+      checkViewOwner(d, old);
+      // A locked view keeps its settings until someone unlocks it (column widths still adjust).
+      const keys = Object.keys(a.config ?? {});
+      if (old.config.locked && (a.name !== undefined || keys.some((k) => k !== "locked" && k !== "fieldWidths"))) fail("This view is locked. Unlock it to change it.");
       const v = d.view(a.viewId);
       if (a.name !== undefined) v.name = cleanName(a.name, "View");
       if (a.config) {
         const next = { ...v.config, ...structuredClone(a.config) } as ViewConfig;
+        checkViewExtras(d, v, next);
         if (next.kanban?.stackFieldId) {
           const f = d.fields[next.kanban.stackFieldId];
           if (!f || f.tableId !== v.tableId || f.type !== "singleSelect") fail("Kanban stacks need a single select field");
@@ -947,8 +1101,11 @@ function apply(d: Draft, a: Action, at: string): void {
     }
     case "view.delete": {
       const v = d.views[a.viewId] ?? fail("View not found");
+      checkViewOwner(d, v);
+      if (v.config.locked) fail("This view is locked. Unlock it before deleting it.");
       const t = d.table(v.tableId);
       if (t.viewOrder.length <= 1) fail("A table needs at least one view");
+      if (!v.personalFor && t.viewOrder.every((id) => id === v.id || d.views[id]?.personalFor)) fail("A table needs at least one view everyone can see");
       t.viewOrder = t.viewOrder.filter((id) => id !== v.id);
       d.remove("views", v.id);
       return;

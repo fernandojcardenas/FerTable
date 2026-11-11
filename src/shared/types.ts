@@ -26,6 +26,7 @@ export type FieldType =
   | "button"
   | "lastModifiedTime"
   | "lastModifiedBy"
+  | "createdBy"
   | "ai";
 
 export type SelectChoice = { id: string; name: string; color: string };
@@ -57,7 +58,12 @@ export type FieldOptions = {
   button?: { label: string; kind: "url" | "automation"; url?: string; automationId?: string };
   /** AI fields: the prompt, with {fldId} placeholders filled from the record. */
   prompt?: string;
+  /** Long text: allow formatting (bold, italic, lists, links, headings), stored as Markdown. */
+  richText?: boolean;
 };
+
+/** Who may change a field's values, or add and delete a table's records. "editors" = anyone who can edit the base. */
+export type EditPermission = "editors" | "owners" | { userIds: string[] };
 
 export type ButtonConfig = NonNullable<FieldOptions["button"]>;
 
@@ -70,6 +76,8 @@ export type Field = {
   description?: string;
   /** In a synced table: the source field this one copies (read-only here). */
   syncSourceFieldId?: string;
+  /** Who can change this field's values (missing = everyone who can edit the base). */
+  editableBy?: EditPermission;
 };
 
 /** A file stored by the server. `url` always points at /api/files/. */
@@ -83,6 +91,8 @@ export type Row = {
   cells: Record<string, CellValue>;
   createdAt: string;
   autoNumber: number;
+  /** Who created the record (null = automation, form or sync; missing on records made before this was kept). */
+  createdBy?: string | null;
   /** When the record last changed and who changed it (null = automation, form or AI). */
   modifiedAt?: string;
   modifiedBy?: string | null;
@@ -105,10 +115,14 @@ export type Table = {
   nextAutoNumber: number;
   /** Set when this table copies a view of a table in another base. */
   sync?: TableSync;
+  /** Who can add and delete records (missing = everyone who can edit the base). */
+  recordsEditableBy?: EditPermission;
 };
 
 /** A read-only copy of a view in another base, kept up to date by the server. */
 export type TableSync = {
+  /** "base" copies a view of another base; "url" reads a CSV file or a Google Sheet. Missing = "base". */
+  kind?: "base" | "url";
   sourceBaseId: string;
   sourceTableId: string;
   sourceViewId: string;
@@ -140,7 +154,21 @@ export type FormConfig = {
   publicToken?: string | null;
 };
 
-export type ViewType = "grid" | "kanban" | "calendar" | "gallery" | "form";
+export type ViewType = "grid" | "kanban" | "calendar" | "gallery" | "form" | "timeline" | "list";
+
+/** A summary shown under a grid column. */
+export type SummaryFn =
+  | "filled" | "empty" | "percentFilled" | "percentEmpty" | "unique"
+  | "sum" | "avg" | "median" | "min" | "max" | "range"
+  | "checked" | "unchecked" | "percentChecked"
+  | "earliest" | "latest" | "dateRange";
+
+/** Record coloring: by a single select's option colors, or by rules (the first matching rule wins). */
+export type RecordColoring =
+  | { mode: "select"; fieldId: string }
+  | { mode: "conditions"; rules: { id: string; color: string; filters: Filters }[] };
+
+export type RowHeight = "short" | "medium" | "tall" | "extraTall";
 
 export type FilterCondition = { id: string; fieldId: string; operator: string; value: unknown };
 export type Filters = { conjunction: "and" | "or"; conditions: FilterCondition[] };
@@ -156,6 +184,20 @@ export type ViewConfig = {
   gallery?: { coverFieldId: string | null };
   form?: FormConfig;
   fieldWidths?: Record<string, number>;
+  rowHeight?: RowHeight;
+  /** Grid columns that stay put while scrolling sideways, primary field included (1–5). */
+  frozenCount?: number;
+  /** Grid footer summaries, by field id. */
+  summaries?: Record<string, SummaryFn>;
+  colors?: RecordColoring | null;
+  /** Timeline / Gantt: bars from a start date to an end date (or one day), optional dependency arrows. */
+  timeline?: { startFieldId: string | null; endFieldId: string | null; scale: "day" | "week" | "month"; dependencyFieldId: string | null };
+  /** List view: show each record's linked records nested under it. */
+  list?: { nestFieldId: string | null };
+  /** Secret code for a read-only public link to this view (/v/<code>); unset = members only. */
+  shareToken?: string | null;
+  /** Locked views can't be changed until an owner unlocks them. */
+  locked?: boolean;
 };
 
 export type View = {
@@ -164,6 +206,8 @@ export type View = {
   name: string;
   type: ViewType;
   config: ViewConfig;
+  /** A personal view: only this person sees it in the list and can change it. */
+  personalFor?: string | null;
 };
 
 export type AutomationTrigger =
@@ -242,16 +286,45 @@ export type PageElement = Box & (
   | { kind: "text"; text: string }
   | { kind: "button"; label: string; action: { type: "url"; url: string } | { type: "automation"; automationId: string } | { type: "view"; viewId: string } }
 );
-export type InterfacePage = { id: string; name: string; elements: PageElement[] };
+/** A filter people viewing a dashboard can change; it narrows every element that reads the same table. */
+export type PageControl = { id: string; tableId: string; fieldId: string };
+
+/** Print layouts place record fields on a sheet of paper (positions and sizes in millimetres). */
+export type PrintItem = {
+  id: string; x: number; y: number; w: number; h: number;
+  /** field: a field's value; text: fixed text where {Field name} is filled in; image: the first image of an attachment field; line: a rule. */
+  kind: "field" | "text" | "image" | "line";
+  fieldId?: string | null; text?: string; size: number; bold: boolean; label: boolean; align: "left" | "center" | "right";
+};
+
+export type InterfacePage = {
+  id: string;
+  name: string;
+  elements: PageElement[];
+  /** dashboard (default): elements on a grid. record: pick a record and see its fields. print: a printable layout. */
+  kind?: "dashboard" | "record" | "print";
+  /** Record and print pages: which table, and (record pages) which fields to show. */
+  tableId?: string | null;
+  viewId?: string | null;
+  fieldIds?: string[];
+  /** Print pages: the sheet and what goes on it. */
+  paper?: "a4" | "letter";
+  items?: PrintItem[];
+  /** Dashboard filters viewers can change. */
+  controls?: PageControl[];
+  /** Secret code for a read-only public link (/i/<code>); unset = members only. */
+  shareToken?: string | null;
+};
 
 // ---- Actions: every change to a base is one of these ----
 
 export type Action =
   | { type: "table.create"; tableId: string; name: string; primaryFieldId: string; viewId: string; sync?: TableSync }
   | { type: "table.rename"; tableId: string; name: string }
+  | { type: "table.permissions"; tableId: string; recordsEditableBy: EditPermission | null }
   | { type: "table.delete"; tableId: string }
   | { type: "field.create"; fieldId: string; tableId: string; name: string; fieldType: FieldType; options?: FieldOptions; inverseFieldId?: string; afterFieldId?: string | null }
-  | { type: "field.update"; fieldId: string; name?: string; fieldType?: FieldType; options?: FieldOptions; description?: string; inverseFieldId?: string }
+  | { type: "field.update"; fieldId: string; name?: string; fieldType?: FieldType; options?: FieldOptions; description?: string; inverseFieldId?: string; editableBy?: EditPermission | null }
   | { type: "field.delete"; fieldId: string }
   | { type: "field.move"; fieldId: string; toIndex: number }
   | { type: "row.create"; rowId: string; tableId: string; cells?: Record<string, CellValue>; createdAt?: string; afterRowId?: string | null; formViewId?: string }
@@ -274,7 +347,7 @@ export type Action =
    */
   | { type: "link.add"; rowId: string; fieldId: string; linkedRowIds: string[] }
   | { type: "link.remove"; rowId: string; fieldId: string; linkedRowIds: string[] }
-  | { type: "view.create"; viewId: string; tableId: string; name: string; viewType: ViewType; copyFromViewId?: string | null }
+  | { type: "view.create"; viewId: string; tableId: string; name: string; viewType: ViewType; copyFromViewId?: string | null; personal?: boolean }
   | { type: "view.update"; viewId: string; name?: string; config?: Partial<ViewConfig> }
   | { type: "view.delete"; viewId: string }
   | { type: "base.rename"; name: string }
@@ -347,6 +420,8 @@ export type ServerMessage =
   | { type: "hello"; txn: number }
   | { type: "batch"; batch: ActionBatch }
   | { type: "resync"; reason: string }
+  /** Something for you in the notifications bell. */
+  | { type: "notification" }
   /** Your access changed while connected (null = removed). */
   | { type: "access"; role: Role | null }
   /** Comments live outside the action log; they arrive as their own events. */

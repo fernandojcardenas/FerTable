@@ -60,6 +60,22 @@ export async function connectionUrl(baseId: string, id: string): Promise<{ kind:
   return rows[0] ?? null;
 }
 
+/**
+ * DNS lookup for outgoing requests that refuses private addresses. Node may ask for
+ * one address or (with happy eyeballs) all of them; every answer is checked.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function safeLookup(hostname: string, options: any, cb: any) {
+  lookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return cb(err);
+    const list = addresses as unknown as { address: string; family: number }[];
+    if (!list.length) return cb(new Error("That address couldn't be found"));
+    if (list.some((a) => isPrivateAddress(a.address))) return cb(new Error("That address is inside a private network"));
+    if (options?.all) return cb(null, list);
+    cb(null, list[0].address, list[0].family);
+  });
+}
+
 /** Loopback, private, link-local, carrier-grade NAT, multicast and other non-public addresses. */
 export function isPrivateAddress(ip: string): boolean {
   const v = isIP(ip);
@@ -96,13 +112,7 @@ export function safePost(url: string, body: unknown, timeoutMs = 10_000, extraHe
       method: "POST",
       headers: { "content-type": "application/json", "content-length": data.length, "user-agent": "gridbase-automation", ...extraHeaders },
       timeout: timeoutMs,
-      lookup: (hostname, options, cb) => {
-        lookup(hostname, { ...options, all: false }, (err, address, family) => {
-          if (err) return cb(err, address, family);
-          if (isPrivateAddress(String(address))) return cb(new Error("That address is inside a private network"), address, family);
-          cb(null, address, family);
-        });
-      },
+      lookup: safeLookup,
     }, (res) => {
       let size = 0;
       res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 100_000) res.destroy(); });
@@ -113,4 +123,41 @@ export function safePost(url: string, body: unknown, timeoutMs = 10_000, extraHe
     req.on("error", reject);
     req.end(data);
   });
+}
+
+/**
+ * GET a public https address and return the text (used by CSV / Google Sheets syncs).
+ * Same address checks as safePost; a few redirects are followed, each one checked again.
+ */
+export async function safeGet(url: string, maxBytes = 5_000_000, timeoutMs = 20_000, redirects = 3): Promise<{ status: number; text: string; type: string }> {
+  const u = new URL(url);
+  if (u.protocol !== "https:") throw new Error("Only https addresses can be read");
+  const literal = u.hostname.replace(/^\[|\]$/g, "");
+  if (u.hostname === "localhost" || (isIP(literal) && isPrivateAddress(literal))) throw new Error("That address is inside a private network");
+  const res = await new Promise<{ status: number; text: string; type: string; location?: string }>((resolve, reject) => {
+    const req = request(u, {
+      method: "GET",
+      headers: { "user-agent": "gridbase-sync", accept: "text/csv, text/plain, */*" },
+      timeout: timeoutMs,
+      lookup: safeLookup,
+    }, (r) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      r.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > maxBytes) { r.destroy(); reject(new Error(`The file is larger than ${Math.round(maxBytes / 1e6)} MB`)); return; }
+        chunks.push(chunk);
+      });
+      r.on("end", () => resolve({ status: r.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8"), type: String(r.headers["content-type"] ?? ""), location: r.headers.location }));
+      r.on("error", reject);
+    });
+    req.on("timeout", () => req.destroy(new Error("The address didn't answer in time")));
+    req.on("error", reject);
+    req.end();
+  });
+  if (res.status >= 300 && res.status < 400 && res.location) {
+    if (redirects <= 0) throw new Error("Too many redirects");
+    return safeGet(new URL(res.location, u).toString(), maxBytes, timeoutMs, redirects - 1);
+  }
+  return { status: res.status, text: res.text, type: res.type };
 }

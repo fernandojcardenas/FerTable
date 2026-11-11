@@ -1,5 +1,6 @@
 "use client";
 
+import { RichTextEditor } from "./richText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Attachment, CellValue, Field, SelectChoice } from "@/shared/types";
 import { formatBytes, formatDuration, makeChoice } from "@/shared/fieldTypes";
@@ -193,6 +194,13 @@ export function FieldInput({ field, value, onCommit }: { field: Field; value: Ce
         />
       );
     case "longText":
+      if (field.options.richText) {
+        return (
+          <div onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null) && text !== toEditText(field, value)) onCommit(text); }}>
+            <RichTextEditor value={text} onChange={setText} />
+          </div>
+        );
+      }
       return <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} onBlur={() => onCommit(text)} />;
     default:
       return (
