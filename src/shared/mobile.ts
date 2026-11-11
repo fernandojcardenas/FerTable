@@ -58,7 +58,7 @@ function mobileRow(c: Computer, row: Row, fields: Field[], view?: View): MobileR
 /** Tables and views of a base, without records. Other people's personal views are left out. */
 export function baseOutline(state: BaseState, userId: string | null, role: Role) {
   return {
-    base: { id: state.base.id, name: state.base.name },
+    base: { id: state.base.id, name: state.base.name, txn: state.base.txn },
     role,
     tables: state.tableOrder.map((id) => state.tables[id]).filter(Boolean).map((t) => ({
       id: t.id,
