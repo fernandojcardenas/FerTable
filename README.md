@@ -87,7 +87,7 @@ Everything works with no settings. These are the ones most people change:
 | `DATABASE_URL` | Use this Postgres server instead of the embedded one |
 | `APP_URL` | The public address, used for links in emails and for single sign-on |
 | `SMTP_URL`, `MAIL_FROM` | Send real email (without them, emails are printed to the server log) |
-| `ANTHROPIC_API_KEY` | Turns on AI fields (each answer is a paid AI API call) |
+| `ANTHROPIC_API_KEY`, `FERTABLE_AI_MODEL` | Turn on AI fields: the API key and the model to use (each answer is a paid API call) |
 | `FERTABLE_OIDC_ISSUER`, `FERTABLE_OIDC_CLIENT_ID`, `FERTABLE_OIDC_CLIENT_SECRET` | Single sign-on |
 | `FERTABLE_ALLOW_SIGNUP`, `FERTABLE_VERIFY_EMAIL` | Turn sign-up or email confirmation off |
 | `PORT`, `HOST` | Where the server listens (default `localhost:3210`) |

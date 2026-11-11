@@ -209,8 +209,8 @@ export function NewFieldOptions({ type, opts, setOpts, tableFields, existing }: 
         <textarea id="ai-prompt" className="textarea" rows={4} value={show(prompt)} placeholder={"Write a one-line summary of {Notes}"}
           onChange={(e) => setOpts({ ...opts, prompt: store(e.target.value) })} />
         <p className="small muted" style={{ margin: "4px 0" }}>
-          Use {"{Field name}"} for the record's values. The answer updates when those fields change. AI answers come from an AI model and need
-          {" "}<code>ANTHROPIC_API_KEY</code> on the server.
+          Use {"{Field name}"} for the record's values. The answer updates when those fields change. AI answers need
+          {" "}<code>ANTHROPIC_API_KEY</code> and <code>FERTABLE_AI_MODEL</code> on the server.
         </p>
         {preview && <p className="small muted" style={{ margin: 0 }}>First record's prompt: <b style={{ color: "var(--text)" }}>{preview.slice(0, 300)}</b></p>}
         {existing?.type === "ai" && <div style={{ marginTop: 6 }}><RegenerateButton field={existing} label="✦ Refill every record" /></div>}

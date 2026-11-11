@@ -69,8 +69,8 @@ Settings (environment variables):
 - **Button fields** open a link built from the record (`https://…?q={Name}`, values are
   URL-encoded; only `https:`, `mailto:` and `tel:` links) or run an automation on the record.
 - **AI fields** fill each record from a prompt such as `Summarize {Notes}` using an AI model
-  (`the model set in the settings`, change with `FERTABLE_AI_MODEL`). The server needs `ANTHROPIC_API_KEY`
-  (or an `ant auth login` profile). Answers refresh when the fields the prompt uses change;
+  through the Anthropic API. The server needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile)
+  and `FERTABLE_AI_MODEL`, the id of the model to use. Answers refresh when the fields the prompt uses change;
   *Regenerate* refills one record or all. Limits: 2 at a time and 500 per base per hour
   (`FERTABLE_AI_CONCURRENCY`, `FERTABLE_AI_PER_HOUR`). Problems (no key, refusals) show on
   the cell and the last good answer is kept. `FERTABLE_AI_FAKE=1` answers without calling the

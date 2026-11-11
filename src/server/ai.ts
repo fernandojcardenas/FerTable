@@ -1,10 +1,11 @@
-// AI fields: write one cell's text with an AI model. Runs on the server only, so the
-// API key never reaches a browser. Set ANTHROPIC_API_KEY (or sign in with `ant auth login`).
+// AI fields: write one cell's text with an AI model through the Anthropic API. Runs on the
+// server only, so the API key never reaches a browser. Set ANTHROPIC_API_KEY (or sign in with
+// `ant auth login`) and FERTABLE_AI_MODEL (the model id to use).
 
 import Anthropic from "@anthropic-ai/sdk";
 
-/** Model for AI fields. Override with FERTABLE_AI_MODEL. */
-export const AI_MODEL = process.env.FERTABLE_AI_MODEL ?? "";
+/** Model for AI fields, from FERTABLE_AI_MODEL. AI fields stay off until it is set. */
+export const AI_MODEL = process.env.FERTABLE_AI_MODEL?.trim() ?? "";
 
 const SYSTEM = [
   "You fill in one cell of a spreadsheet-style database.",
@@ -25,6 +26,7 @@ export async function generateCell(prompt: string): Promise<AiResult> {
   if (!prompt.trim()) return { error: "This AI field has no prompt yet" };
   // For tests and demos without an API key: answers without calling the API.
   if (process.env.FERTABLE_AI_FAKE === "1") return { text: `AI: ${prompt.trim().slice(0, 200)}` };
+  if (!AI_MODEL) return { error: "AI isn't set up on this server (set FERTABLE_AI_MODEL)" };
   try {
     const response = await getClient().beta.messages.create({
       model: AI_MODEL,
