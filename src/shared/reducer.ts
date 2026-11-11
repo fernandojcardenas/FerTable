@@ -184,12 +184,6 @@ function validateOptions(d: Draft, tableId: string, fieldId: string, type: Field
       checkTemplateRefs(d, tableId, url);
       return { button: { label, kind: "url", url } };
     }
-    case "ai": {
-      const prompt = String(o.prompt ?? "");
-      if (prompt.length > 10_000) fail("The AI prompt is too long");
-      checkTemplateRefs(d, tableId, prompt);
-      return { prompt };
-    }
     case "formula": {
       const expr = (o.expression ?? "").trim();
       try {
@@ -994,26 +988,6 @@ function apply(d: Draft, a: Action, at: string): void {
     }
     case "sync.apply":
       return applySync(d, a, at);
-    case "ai.set": {
-      const row = d.rows[a.rowId] ?? fail("Row not found");
-      const f = d.fields[a.fieldId];
-      if (!f || f.type !== "ai" || f.tableId !== row.tableId) fail("Not an AI field");
-      if (a.value !== null && (typeof a.value !== "string" || a.value.length > 100_000)) fail("AI result is too long");
-      const r = d.row(row.id);
-      if (a.value) r.cells[f!.id] = a.value;
-      else delete r.cells[f!.id];
-      const errors = { ...(r.aiErrors ?? {}) };
-      if (a.error) errors[f!.id] = String(a.error).slice(0, 500);
-      else delete errors[f!.id];
-      if (Object.keys(errors).length) r.aiErrors = errors;
-      else delete r.aiErrors;
-      // AI writes don't count as someone editing the record.
-      r.modifiedAt = row.modifiedAt;
-      r.modifiedBy = row.modifiedBy;
-      if (r.modifiedAt === undefined) delete r.modifiedAt;
-      if (r.modifiedBy === undefined) delete r.modifiedBy;
-      return;
-    }
     case "link.add":
     case "link.remove":
       changeLinks(d, a, a.type === "link.add");

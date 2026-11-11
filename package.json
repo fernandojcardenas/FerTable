@@ -15,7 +15,6 @@
     "cleanup-files": "tsx scripts/cleanup-files.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "1.8.0",
     "@electric-sql/pglite": "0.5.11",
     "leaflet": "1.9.4",
     "next": "16.4.3",

@@ -12,9 +12,9 @@ Postgres server can take over in production.
 
 ## What is included
 
-- **Tables and fields:** 27 field types, including linked records, lookups, rollups, counts,
-  formulas, rich text, attachments, ratings, durations, barcodes, people, buttons, created and
-  last-modified time and by, and AI fields that fill themselves in from a prompt.
+- **Tables and fields:** 26 field types, including linked records, lookups, rollups, counts,
+  formulas, rich text, attachments, ratings, durations, barcodes, people, buttons, and created and
+  last-modified time and by.
 - **Seven views:** grid, kanban, calendar, gallery, form, timeline (Gantt, with dependency
   arrows) and list (records nested under their linked records). Filters, sorts, groups, hidden
   fields, search, column totals, row heights, frozen columns and record colors are saved per
@@ -89,7 +89,6 @@ Everything works with no settings. These are the ones most people change:
 | `DATABASE_URL` | Use this Postgres server instead of the embedded one |
 | `APP_URL` | The public address, used for links in emails and for single sign-on |
 | `SMTP_URL`, `MAIL_FROM` | Send real email (without them, emails are printed to the server log) |
-| `ANTHROPIC_API_KEY`, `FERTABLE_AI_MODEL` | Turn on AI fields: the API key and the model to use (each answer is a paid API call) |
 | `FERTABLE_OIDC_ISSUER`, `FERTABLE_OIDC_CLIENT_ID`, `FERTABLE_OIDC_CLIENT_SECRET` | Single sign-on |
 | `FERTABLE_ALLOW_SIGNUP`, `FERTABLE_VERIFY_EMAIL` | Turn sign-up or email confirmation off |
 | `PORT`, `HOST` | Where the server listens (default `localhost:3210`) |
@@ -108,7 +107,6 @@ The full list, with every feature explained, is in the [guide](docs/guide.md).
 | Scripts | QuickJS (WebAssembly) | Sandboxed automation scripts with time and memory limits |
 | Maps | Leaflet + OpenStreetMap tiles | Map elements on dashboards |
 | Email | Nodemailer | Invites, mentions, password resets and automation emails |
-| AI fields | Anthropic SDK | Optional, off until a key is set |
 
 Every change is an action applied by one reducer on both sides, so the browser never waits for
 the server to show an edit, and the server never trusts the browser. See
@@ -144,8 +142,7 @@ This repository uses Git tags for meaningful milestones. The first release is `v
 ## Privacy and safety
 
 FerTable is self-hosted: your data stays in your own database, and nothing is sent anywhere
-unless you set it up. That means email through your SMTP server, AI fields through your own
-Anthropic key, and the webhooks, Slack, Sheets and syncs you add. Passwords are hashed with
+unless you set it up. That means email through your SMTP server, and the webhooks, Slack, Sheets and syncs you add. Passwords are hashed with
 scrypt, sessions and API tokens are stored only as hashes, changes must come from the app's own
 pages, and outgoing requests refuse addresses inside private networks. Public links show only
 what their view or page shows.

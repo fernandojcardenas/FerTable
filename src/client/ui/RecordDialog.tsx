@@ -7,7 +7,6 @@ import { CellContent, Dialog, FieldIcon, useBase } from "./common";
 import { FieldInput } from "./inputs";
 import { cellActions } from "./actions";
 import { ActivityPanel } from "./Comments";
-import { RegenerateButton } from "./newFields";
 import { canAddRecords, canEditField } from "./permissions";
 
 export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () => void }) {
@@ -60,7 +59,6 @@ export function RecordDialog({ rowId, onClose }: { rowId: string; onClose: () =>
                 {isReadOnly(f) || !canEdit || !canEditField(snap, f) ? (
                   <div style={{ padding: "6px 0", whiteSpace: "pre-wrap" }}>
                     <CellContent row={row} field={f} detailed />
-                    {f.type === "ai" && <div style={{ marginTop: 4 }}><RegenerateButton field={f} rowIds={[row.id]} /></div>}
                   </div>
                 ) : (
                   <FieldInput field={f} value={row.cells[f.id]} onCommit={(v, ch) => client.dispatch(...cellActions(snap.state, row.id, f, v, ch))} />

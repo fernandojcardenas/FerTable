@@ -36,13 +36,12 @@ export const FIELD_TYPES: Record<FieldType, FieldTypeInfo> = {
   lastModifiedTime: { label: "Last modified time", icon: "🕘", computed: true, description: "When the record last changed." },
   lastModifiedBy: { label: "Last modified by", icon: "✍", computed: true, description: "Who last changed the record." },
   createdBy: { label: "Created by", icon: "✚", computed: true, description: "Who created the record." },
-  ai: { label: "AI", icon: "✦", computed: true, description: "Text written by AI from a prompt." },
 };
 
 export const FIELD_TYPE_ORDER: FieldType[] = [
   "text", "longText", "number", "checkbox", "singleSelect", "multiSelect", "date", "attachment",
   "email", "url", "phone", "rating", "duration", "barcode", "user", "link", "lookup", "rollup", "count", "formula",
-  "ai", "button", "createdTime", "lastModifiedTime", "lastModifiedBy", "createdBy", "autoNumber",
+  "button", "createdTime", "lastModifiedTime", "lastModifiedBy", "createdBy", "autoNumber",
 ];
 
 export const CHOICE_COLORS = ["blue", "cyan", "teal", "green", "yellow", "orange", "red", "pink", "purple", "gray"];
@@ -77,8 +76,6 @@ export function defaultOptions(type: FieldType): FieldOptions {
       return { multiple: false };
     case "button":
       return { button: { label: "Open", kind: "url", url: "" } };
-    case "ai":
-      return { prompt: "" };
     default:
       return {};
   }

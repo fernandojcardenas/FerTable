@@ -6,6 +6,7 @@ import { coerceValue, formatDuration, parseDuration } from "../src/shared/fieldT
 import { fillTemplate } from "../src/shared/automation";
 import { filterKind } from "../src/shared/query";
 import { newId } from "../src/shared/ids";
+import { upgradeState } from "../src/shared/upgrade";
 import type { Action, BaseState, Field } from "../src/shared/types";
 
 const AT = "2026-11-10T12:00:00.000Z";
@@ -15,7 +16,7 @@ const ANA = newId("usr"), BO = newId("usr");
 function setup() {
   const ids = {
     t: newId("tbl"), name: newId("fld"), rating: newId("fld"), dur: newId("fld"), code: newId("fld"), who: newId("fld"), team: newId("fld"),
-    btn: newId("fld"), mod: newId("fld"), by: newId("fld"), ai: newId("fld"), v: newId("viw"), r: newId("rec"),
+    btn: newId("fld"), mod: newId("fld"), by: newId("fld"), v: newId("viw"), r: newId("rec"),
   };
   let s = applyActions(emptyBase(newId("bas"), "Test"), [
     { type: "table.create", tableId: ids.t, name: "Tasks", primaryFieldId: ids.name, viewId: ids.v },
@@ -27,7 +28,6 @@ function setup() {
     { type: "field.create", fieldId: ids.btn, tableId: ids.t, name: "Map", fieldType: "button", options: { button: { label: "Map", kind: "url", url: `https://maps.example.com/?q={${ids.name}}` } } },
     { type: "field.create", fieldId: ids.mod, tableId: ids.t, name: "Changed", fieldType: "lastModifiedTime" },
     { type: "field.create", fieldId: ids.by, tableId: ids.t, name: "Changed by", fieldType: "lastModifiedBy" },
-    { type: "field.create", fieldId: ids.ai, tableId: ids.t, name: "Summary", fieldType: "ai", options: { prompt: `Summarize {${ids.name}}` } },
     { type: "row.create", rowId: ids.r, tableId: ids.t, cells: { [ids.name]: "Fix login" } },
   ], AT, ANA);
   s = { ...s, people: { [ANA]: { name: "Ana", email: "ana@example.test" }, [BO]: { name: "Bo", email: "bo@example.test" } } };
@@ -72,30 +72,27 @@ test("records remember when and by whom they last changed", () => {
   assert.equal(filterKind(f(s, ids.mod)), "date");
 });
 
-test("AI results come from ai.set, keep errors, and don't count as an edit", () => {
+test("saved fields of a removed type open as long text and keep their values", () => {
   const { s, ids } = setup();
-  const before = s.rows[ids.r];
-  const ok = applyAction(s, { type: "ai.set", rowId: ids.r, fieldId: ids.ai, value: "Login bug" }, LATER, null);
-  assert.equal(ok.rows[ids.r].cells[ids.ai], "Login bug");
-  assert.equal(ok.rows[ids.r].modifiedAt, before.modifiedAt, "not an edit");
-  assert.equal(ok.rows[ids.r].modifiedBy, before.modifiedBy);
-  const failed = applyAction(ok, { type: "ai.set", rowId: ids.r, fieldId: ids.ai, value: "Login bug", error: "AI isn't set up" }, LATER, null);
-  assert.equal(new Computer(failed).isError(failed.rows[ids.r], f(failed, ids.ai)), "AI isn't set up");
-  assert.equal(failed.rows[ids.r].cells[ids.ai], "Login bug", "the last good answer is kept");
-  const cleared = applyAction(failed, { type: "ai.set", rowId: ids.r, fieldId: ids.ai, value: "New" }, LATER, null);
-  assert.equal(cleared.rows[ids.r].aiErrors, undefined);
-  assert.throws(() => applyAction(s, { type: "ai.set", rowId: ids.r, fieldId: ids.code, value: "x" }, LATER), /Not an AI field/);
-  assert.throws(() => applyAction(s, { type: "row.update", rowId: ids.r, cells: { [ids.ai]: "typed" } }, LATER), /computed/);
-  assert.equal(fillTemplate(s, s.rows[ids.r], f(s, ids.ai).options.prompt!), "Summarize Fix login");
+  const old = structuredClone(s) as BaseState;
+  const legacy = old.fields[ids.code] as unknown as { type: string; options: Record<string, unknown> };
+  legacy.type = "ai";
+  legacy.options.prompt = "Summarize";
+  old.rows[ids.r].cells[ids.code] = "Login bug";
+  (old.rows[ids.r] as unknown as { aiErrors: unknown }).aiErrors = { [ids.code]: "failed" };
+  const up = upgradeState(old);
+  assert.equal(up.fields[ids.code].type, "longText");
+  assert.equal("prompt" in up.fields[ids.code].options, false);
+  assert.equal(up.rows[ids.r].cells[ids.code], "Login bug");
+  assert.equal("aiErrors" in up.rows[ids.r], false);
+  assert.equal(new Computer(up).display(up.rows[ids.r], up.fields[ids.code]), "Login bug");
 });
 
-test("button and AI settings are checked", () => {
+test("button settings are checked", () => {
   const { s, ids } = setup();
   const make = (type: Field["type"], options: Field["options"]): Action => ({ type: "field.create", fieldId: newId("fld"), tableId: ids.t, name: `F ${Math.random()}`, fieldType: type, options });
   assert.throws(() => applyAction(s, make("button", { button: { label: "Go", kind: "url", url: "javascript:alert(1)" } })), /must start with https/);
   assert.throws(() => applyAction(s, make("button", { button: { label: "Go", kind: "automation", automationId: newId("aut") } })), /doesn't exist/);
-  assert.throws(() => applyAction(s, make("ai", { prompt: `Use {${newId("fld")}}` })), /doesn't exist/);
-  assert.throws(() => applyAction(s, make("ai", { prompt: "x".repeat(10_001) })), /too long/);
   const rated = applyAction(s, make("rating", { max: 99 }));
   assert.equal(Object.values(rated.fields).find((x) => x.type === "rating" && x.id !== ids.rating)?.options.max, 10);
   assert.equal(fillTemplate(s, s.rows[ids.r], f(s, ids.btn).options.button!.url!, new Date(), true), "https://maps.example.com/?q=Fix%20login");

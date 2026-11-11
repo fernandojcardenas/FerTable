@@ -1,6 +1,6 @@
 "use client";
 
-// Widgets for rating, user, button and AI fields.
+// Widgets for rating, user and button fields.
 
 import { useState } from "react";
 import type { Field, FieldOptions, Row } from "@/shared/types";
@@ -106,28 +106,6 @@ export function ButtonCell({ row, field }: { row: Row; field: Field }) {
   );
 }
 
-/** "Regenerate" for an AI cell (or the whole field when rowIds is omitted). */
-export function RegenerateButton({ field, rowIds, label = "✦ Regenerate" }: { field: Field; rowIds?: string[]; label?: string }) {
-  const { snap } = useBase();
-  const [msg, setMsg] = useState<string | null>(null);
-  if (!(snap.role === "owner" || snap.role === "editor")) return null;
-  async function go() {
-    setMsg("Asking the AI…");
-    const r = await fetch(`/api/bases/${snap.state.base.id}/ai/${field.id}/generate`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rowIds }),
-    }).catch(() => null);
-    const d = await r?.json().catch(() => ({}));
-    setMsg(r?.ok ? (rowIds ? "Working on it…" : `Filling ${d.queued} record${d.queued === 1 ? "" : "s"}…`) : d?.error ?? "Failed");
-    setTimeout(() => setMsg(null), 4000);
-  }
-  return (
-    <span className="row" style={{ gap: 6 }}>
-      <button type="button" className="btn ghost small" onClick={() => void go()}>{label}</button>
-      {msg && <span className="muted small" role="status">{msg}</span>}
-    </span>
-  );
-}
-
 /** Field dialog settings for the new field types. */
 export function NewFieldOptions({ type, opts, setOpts, tableFields, existing }: {
   type: Field["type"]; opts: FieldOptions; setOpts: (o: FieldOptions) => void; tableFields: Field[]; existing?: Field;
@@ -197,23 +175,6 @@ export function NewFieldOptions({ type, opts, setOpts, tableFields, existing }: 
             <p className="small muted" style={{ margin: "4px 0 0" }}>Runs the automation's steps on the clicked record (editors only).</p>
           </div>
         )}
-      </div>
-    );
-  }
-  if (type === "ai") {
-    const prompt = opts.prompt ?? "";
-    const preview = firstRow && prompt ? fillTemplate(snap.state, firstRow, prompt) : "";
-    return (
-      <div>
-        <label className="field-label" htmlFor="ai-prompt">Prompt</label>
-        <textarea id="ai-prompt" className="textarea" rows={4} value={show(prompt)} placeholder={"Write a one-line summary of {Notes}"}
-          onChange={(e) => setOpts({ ...opts, prompt: store(e.target.value) })} />
-        <p className="small muted" style={{ margin: "4px 0" }}>
-          Use {"{Field name}"} for the record's values. The answer updates when those fields change. AI answers need
-          {" "}<code>ANTHROPIC_API_KEY</code> and <code>FERTABLE_AI_MODEL</code> on the server.
-        </p>
-        {preview && <p className="small muted" style={{ margin: 0 }}>First record's prompt: <b style={{ color: "var(--text)" }}>{preview.slice(0, 300)}</b></p>}
-        {existing?.type === "ai" && <div style={{ marginTop: 6 }}><RegenerateButton field={existing} label="✦ Refill every record" /></div>}
       </div>
     );
   }

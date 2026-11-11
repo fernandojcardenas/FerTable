@@ -15,7 +15,7 @@ flowchart LR
   S --> R2["Reducer + permission checks"]
   R2 --> DB[("Postgres / PGlite<br/>tables · rows · views · action_log · row_history")]
   S -->|"/realtime WebSocket<br/>numbered transactions"| C
-  S --> E["Engine<br/>automations · AI fields · syncs · snapshots"]
+  S --> E["Engine<br/>automations · syncs · snapshots"]
   E -->|"signed POSTs"| W["Webhooks, Slack, Sheets"]
   API["/v1 developer API<br/>personal access tokens"] --> S
   SSO["OpenID Connect provider"] -. "sign-in" .-> S

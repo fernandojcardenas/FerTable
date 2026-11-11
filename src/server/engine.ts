@@ -10,7 +10,6 @@ import { emailStep, fillTemplate, lastScheduledTime, linkedRecords, MAX_LOOP_ITE
 import { connectionUrl, safeGet, safePost } from "./connections";
 import { runScript } from "./script";
 import { isComputed } from "../shared/fieldTypes";
-import { generateCell, type AiResult } from "./ai";
 import { checkSubmission, PUBLIC_TOKEN_RE } from "../shared/publicForm";
 import { oneLine, sendMail } from "./mail";
 import { starterTableActions } from "../shared/starter";
@@ -18,6 +17,7 @@ import { templateActions } from "../shared/templates";
 import { copyBaseState } from "../shared/duplicate";
 import { rowHistory, type DeletedSnapshot } from "../shared/activity";
 import { newId } from "../shared/ids";
+import { upgradeState } from "../shared/upgrade";
 import { getDb, type Queryable } from "./db";
 import { deliverWebhooks } from "./webhooks";
 import { buildSync, sourceLabel } from "../shared/sync";
@@ -97,7 +97,7 @@ export class Engine {
     }
     const meta = await db.query<{ table_order: string[] }>("select table_order from base_meta where base_id = $1", [baseId]);
     state.tableOrder = (meta.rows[0]?.table_order ?? Object.keys(state.tables)).filter((id) => state.tables[id]);
-    return state;
+    return upgradeState(state);
   }
 
   async createBase(name: string, ownerId: string, templateId?: string | null, workspaceId?: string | null): Promise<string> {
@@ -163,7 +163,6 @@ export class Engine {
       // Automations run after the lock is released, as their own transactions.
       this.runAutomations(baseId, result.before, result.after, result.batch).catch((e) => console.error("automation error", e));
     }
-    if (!req.actions.every((a) => a.type === "ai.set")) this.scheduleAi(baseId, result.before, result.after);
     if ((source === "client" || source === "api") && req.userId) {
       this.notifyAssignments(baseId, result.before, result.after, req.userId).catch((e) => console.error("notification error", e));
     }
@@ -243,7 +242,7 @@ export class Engine {
     await this.createSnapshot(baseId, userId, `Before restoring “${rows[0].name}”`);
     const current = await this.getState(baseId);
     if (!current) throw new ValidationError("Base not found");
-    const saved: BaseState = { ...rows[0].data, pages: rows[0].data.pages ?? {}, base: { ...current.base, name: rows[0].data.base.name } };
+    const saved: BaseState = upgradeState({ ...rows[0].data, pages: rows[0].data.pages ?? {}, base: { ...current.base, name: rows[0].data.base.name } });
     const patch = inversePatch(saved, current);
     if (!Object.keys(patch).length) return;
     await this.apply(baseId, { clientId: null, requestId: null, userId, actor: "Snapshot restore", actions: [{ type: "restore", patch }] }, "sync");
@@ -260,93 +259,14 @@ export class Engine {
     return rows.length;
   }
 
-  // ---- AI fields ----
-
-  private aiQueue: { baseId: string; rowId: string; fieldId: string }[] = [];
-  private aiQueued = new Set<string>();
-  private aiRunning = 0;
-  private aiUsage = new Map<string, { windowStart: number; used: number }>();
-
-  /** Queue AI cells whose prompt inputs changed (new records, edited fields, or a new/edited prompt). */
-  private scheduleAi(baseId: string, before: BaseState, after: BaseState) {
-    for (const f of Object.values(after.fields)) {
-      if (f.type !== "ai" || !f.options.prompt?.trim()) continue;
-      const prev = before.fields[f.id];
-      const promptChanged = !prev || prev.type !== "ai" || prev.options.prompt !== f.options.prompt;
-      if (!promptChanged && before.rows === after.rows) continue;
-      const refs = templateRefs(f.options.prompt);
-      let queued = 0;
-      for (const rowId of after.tables[f.tableId]?.rowOrder ?? []) {
-        const now = after.rows[rowId];
-        const was = before.rows[rowId];
-        if (!now) continue;
-        const changed = promptChanged || !was || refs.some((r) => JSON.stringify(was.cells[r] ?? null) !== JSON.stringify(now.cells[r] ?? null));
-        if (!changed) continue;
-        // A new prompt on a big table fills the first rows; Regenerate does the rest.
-        if (promptChanged && queued >= AI_AUTO_ROWS) break;
-        this.enqueueAi(baseId, rowId, f.id);
-        queued++;
-      }
-    }
-  }
-
-  /** Fill AI cells now (the "Generate" button). Returns how many were queued. */
-  queueAiField(baseId: string, state: BaseState, fieldId: string, rowIds?: string[]): number {
-    const f = state.fields[fieldId];
-    if (!f || f.type !== "ai") throw new ValidationError("Not an AI field");
-    const ids = (rowIds?.length ? rowIds : state.tables[f.tableId]?.rowOrder ?? []).filter((id) => state.rows[id]?.tableId === f.tableId).slice(0, 2000);
-    ids.forEach((id) => this.enqueueAi(baseId, id, fieldId));
-    return ids.length;
-  }
-
-  private enqueueAi(baseId: string, rowId: string, fieldId: string) {
-    const key = `${baseId}|${rowId}|${fieldId}`;
-    if (this.aiQueued.has(key)) return;
-    this.aiQueued.add(key);
-    this.aiQueue.push({ baseId, rowId, fieldId });
-    this.pumpAi();
-  }
-
-  private pumpAi() {
-    while (this.aiRunning < AI_CONCURRENCY && this.aiQueue.length) {
-      const job = this.aiQueue.shift()!;
-      this.aiQueued.delete(`${job.baseId}|${job.rowId}|${job.fieldId}`);
-      this.aiRunning++;
-      this.runAiJob(job).catch((e) => console.error("AI field error", e)).finally(() => { this.aiRunning--; this.pumpAi(); });
-    }
-  }
-
-  private async runAiJob({ baseId, rowId, fieldId }: { baseId: string; rowId: string; fieldId: string }) {
-    const state = await this.getState(baseId);
-    const row = state?.rows[rowId];
-    const field = state?.fields[fieldId];
-    if (!state || !row || !field || field.type !== "ai") return;
-    const prompt = fillTemplate(state, row, field.options.prompt ?? "");
-    let result: AiResult;
-    const now = Date.now();
-    let u = this.aiUsage.get(baseId);
-    if (!u || now - u.windowStart > 3600_000) this.aiUsage.set(baseId, (u = { windowStart: now, used: 0 }));
-    if (u.used >= AI_PER_HOUR) result = { error: `This base reached its limit of ${AI_PER_HOUR} AI answers this hour` };
-    else { u.used++; result = await generateCell(prompt); }
-    // The record may have changed or gone while we waited.
-    const latest = (await this.getState(baseId))?.rows[rowId];
-    if (!latest) return;
-    const current = typeof latest.cells[fieldId] === "string" ? (latest.cells[fieldId] as string) : null;
-    const action: Action = "text" in result
-      ? { type: "ai.set", rowId, fieldId, value: result.text.slice(0, 100_000) }
-      : { type: "ai.set", rowId, fieldId, value: current, error: result.error };
-    await this.apply(baseId, { clientId: null, requestId: null, actions: [action], actor: "AI" }, "automation");
-  }
-
   private async applyLocked(baseId: string, req: ApplyRequest, source: ActionBatch["source"]) {
     const before = await this.getState(baseId);
     if (!before) throw new ValidationError("Base not found");
     if (!Array.isArray(req.actions) || req.actions.length === 0) throw new ValidationError("No actions");
     if (req.actions.length > 5000) throw new ValidationError("Too many actions in one request");
 
-    // Only the server writes AI results.
+    // Only the server fills synced tables.
     if (source === "client" || source === "api") {
-      if (req.actions.some((a) => a.type === "ai.set")) throw new ValidationError("AI fields are filled in by the server");
       if (req.actions.some((a) => a.type === "sync.apply" || (a.type === "table.create" && a.sync))) throw new ValidationError("Synced tables are set up and filled in by the server");
     }
     await this.checkPeople(baseId, before, req.actions);
@@ -1037,11 +957,6 @@ type RunState = { steps: number; records: number; emailed: number; posts: number
 const MAX_RUN_STEPS = 200;
 
 export type RunResult = { status: "success" | "failed"; message: string };
-
-/** AI field limits: answers at once, answers per base per hour, rows filled automatically when a prompt changes. */
-const AI_CONCURRENCY = Number(process.env.FERTABLE_AI_CONCURRENCY ?? 2);
-const AI_PER_HOUR = Number(process.env.FERTABLE_AI_PER_HOUR ?? 500);
-const AI_AUTO_ROWS = 200;
 
 /** How long deleted records can be restored (and keep their files). */
 export const DELETED_DAYS = 30;

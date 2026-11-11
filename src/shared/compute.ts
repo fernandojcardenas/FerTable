@@ -117,9 +117,6 @@ export class Computer {
         return Array.isArray(raw) ? (raw as string[]).map((id) => this.personName(id)) : null;
       case "button":
         return field.options.button?.label ?? null;
-      case "ai":
-        if (row.aiErrors?.[field.id]) return new CellError(row.aiErrors[field.id]);
-        return typeof raw === "string" ? raw : null;
       case "count":
         return this.linkedRows(row, field.options.linkFieldId).length;
       case "lookup": {

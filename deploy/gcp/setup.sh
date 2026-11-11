@@ -61,7 +61,6 @@ FERTABLE_DATA_DIR=$DATA/db
 FERTABLE_TRUST_PROXY=true
 NEXT_TELEMETRY_DISABLED=1
 # Optional: SMTP_URL=smtps://user:pass@smtp.example.com:465
-# Optional: ANTHROPIC_API_KEY=...  and  FERTABLE_AI_MODEL=...
 ENV
 fi
 chmod 0640 /etc/fertable/fertable.env && chgrp fertable /etc/fertable/fertable.env

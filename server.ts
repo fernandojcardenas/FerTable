@@ -544,15 +544,6 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       engine.publish(baseId, { type: "comment", event: "deleted", comment });
       return send(res, 200, { ok: true });
     }
-    // POST /api/bases/:id/ai/:fieldId/generate {rowIds?} — fill (or refill) AI cells now.
-    if (sub === "ai" && item && parts[5] === "generate" && method === "POST") {
-      await requireRole(user, baseId, "editor");
-      const body = await readJson(req);
-      const state = await engine.getState(baseId);
-      if (!state) throw new ValidationError("Base not found");
-      const rowIds = Array.isArray(body.rowIds) ? body.rowIds.filter((x): x is string => typeof x === "string") : undefined;
-      return send(res, 200, { queued: engine.queueAiField(baseId, state, item, rowIds) });
-    }
     if (sub === "deleted" && method === "GET") {
       await requireRole(user, baseId, "viewer");
       return send(res, 200, { records: await engine.deletedRows(baseId, url.searchParams.get("tableId") ?? "") });

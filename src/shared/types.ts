@@ -26,8 +26,7 @@ export type FieldType =
   | "button"
   | "lastModifiedTime"
   | "lastModifiedBy"
-  | "createdBy"
-  | "ai";
+  | "createdBy";
 
 export type SelectChoice = { id: string; name: string; color: string };
 
@@ -56,8 +55,6 @@ export type FieldOptions = {
   multiple?: boolean;
   /** Button fields: what a click does. `url` may use {fldId} placeholders. */
   button?: { label: string; kind: "url" | "automation"; url?: string; automationId?: string };
-  /** AI fields: the prompt, with {fldId} placeholders filled from the record. */
-  prompt?: string;
   /** Long text: allow formatting (bold, italic, lists, links, headings), stored as Markdown. */
   richText?: boolean;
 };
@@ -93,11 +90,9 @@ export type Row = {
   autoNumber: number;
   /** Who created the record (null = automation, form or sync; missing on records made before this was kept). */
   createdBy?: string | null;
-  /** When the record last changed and who changed it (null = automation, form or AI). */
+  /** When the record last changed and who changed it (null = automation or form). */
   modifiedAt?: string;
   modifiedBy?: string | null;
-  /** AI fields whose last run failed, with why. */
-  aiErrors?: Record<string, string>;
   /** In a synced table: the source record this row copies. */
   sourceRowId?: string;
 };
@@ -330,8 +325,6 @@ export type Action =
   | { type: "row.create"; rowId: string; tableId: string; cells?: Record<string, CellValue>; createdAt?: string; afterRowId?: string | null; formViewId?: string }
   | { type: "row.update"; rowId: string; cells: Record<string, CellValue> }
   | { type: "row.delete"; rowIds: string[] }
-  /** The server writes an AI field's result (clients can't send this). */
-  | { type: "ai.set"; rowId: string; fieldId: string; value: string | null; error?: string }
   /**
    * The server copies a source view into a synced table (clients can't send this):
    * fields to add, change or drop, rows to add or change (matched by source record), and rows to remove.
