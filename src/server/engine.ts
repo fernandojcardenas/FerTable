@@ -367,7 +367,10 @@ export class Engine {
     const batch: ActionBatch = { txn, at, actions, clientId: req.clientId, requestId: req.requestId, source, userId: req.userId ?? null };
 
     // What happened to each record, for its history.
-    const history = rowHistory(before, after, actions, at);
+    // History keeps display text, so people fields need members' names (they're not part of the saved base).
+    const usesPeople = before.rows !== after.rows && Object.values(after.fields).some((f) => f.type === "user" || f.type === "createdBy" || f.type === "lastModifiedBy");
+    const people = usesPeople ? await this.people(baseId) : undefined;
+    const history = people ? rowHistory({ ...before, people }, { ...after, people }, actions, at) : rowHistory(before, after, actions, at);
     const note = actions.every((a) => a.type === "restore") ? "undo" : null;
 
     const db = await getDb();

@@ -128,7 +128,7 @@ export default function Home() {
                 <span>
                   <strong>{b.name}</strong>
                   <br />
-                  <span className="muted small">{ROLE_LABEL[b.role]} · {b.txn} changes</span>
+                  <span className="muted small">{ROLE_LABEL[b.role]} · {b.txn.toLocaleString()} change{b.txn === 1 ? "" : "s"}</span>
                 </span>
               </a>
             ))}

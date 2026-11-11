@@ -2,6 +2,7 @@
   "name": "fertable",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "An original spreadsheet-database app with live sync (Next.js + Postgres).",
   "type": "module",
   "scripts": {
