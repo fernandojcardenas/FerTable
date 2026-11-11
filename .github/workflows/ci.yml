@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   secrets-scan:
-    name: Secrets scan (gitleaks, full history)
+    name: Secrets and credits scan (full history)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -29,6 +29,15 @@ jobs:
           tar -xzf gitleaks.tgz gitleaks
       - name: Scan every commit
         run: ./gitleaks git . --redact --verbose --exit-code 1
+      - name: No AI credits or mentions
+        # The pattern is written so this file doesn't match itself.
+        run: |
+          if git log --all --format='%an %ae %cn %ce%n%B' | grep -iE 'cl[a]ude|co-authored-by|anthropic\.com'; then
+            echo "A commit credits an AI or a co-author."; exit 1
+          fi
+          if git grep -niE 'cl[a]ude' -- .; then
+            echo "A file mentions it."; exit 1
+          fi
 
   build:
     name: Tests, build and typecheck
