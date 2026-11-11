@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { BaseClient, ClientSnapshot } from "../store";
 import type { Attachment, CellValue, Field, Row } from "@/shared/types";
 import { FIELD_TYPES, isImage, rollupKind } from "@/shared/fieldTypes";
@@ -44,10 +44,17 @@ export function useClickOutside(ref: React.RefObject<HTMLElement | null>, onOuts
   }, [ref, onOutside, active]);
 }
 
+/**
+ * A menu or panel that opens from a button. It floats above the page (position: fixed), so a
+ * scrolling strip like the table tabs or a phone's toolbar can't clip it. It opens below the
+ * button, or above when there isn't room below, and stays inside the window.
+ */
 export function Popover({ open, onClose, children, align = "left", anchor }: {
   open: boolean; onClose: () => void; children: ReactNode; align?: "left" | "right"; anchor: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties | null>(null);
   useClickOutside(ref, onClose, open);
   useEffect(() => {
     if (!open) return;
@@ -55,10 +62,40 @@ export function Popover({ open, onClose, children, align = "left", anchor }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+  useLayoutEffect(() => {
+    if (!open) { setPlace(null); return; }
+    const GAP = 4, EDGE = 8;
+    const update = () => {
+      const a = ref.current?.getBoundingClientRect();
+      if (!a) return;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const w = Math.min(pop.current?.offsetWidth ?? 260, vw - EDGE * 2);
+      const h = pop.current?.scrollHeight ?? 0;
+      const below = vh - a.bottom - GAP - EDGE, above = a.top - GAP - EDGE;
+      const up = h > below && above > below;
+      let left = align === "right" ? a.right - w : a.left;
+      left = Math.max(EDGE, Math.min(left, vw - EDGE - w));
+      setPlace({
+        position: "fixed", left, right: "auto", maxWidth: vw - EDGE * 2, overflowY: "auto",
+        ...(up ? { top: "auto", bottom: vh - a.top + GAP, maxHeight: above } : { top: a.bottom + GAP, bottom: "auto", maxHeight: below }),
+      });
+    };
+    update();
+    // Measure again once the panel has its real size, and follow the button on scroll and resize.
+    const raf = requestAnimationFrame(update);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", update); window.removeEventListener("scroll", update, true); };
+  }, [open, align]);
   return (
     <div className="popover-anchor" ref={ref}>
       {anchor}
-      {open && <div className={`popover ${align === "right" ? "right" : ""}`}>{children}</div>}
+      {open && (
+        <div ref={pop} className={`popover ${align === "right" ? "right" : ""}`}
+          style={place ?? { position: "fixed", visibility: "hidden", top: 0, left: 0 }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
